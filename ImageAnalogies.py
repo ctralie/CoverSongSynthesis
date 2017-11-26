@@ -15,7 +15,10 @@ def readImage(filename):
     return I
 
 def writeImage(I, filename):
-    IRet = np.array(I*255.0, dtype=np.uint8)
+    IRet = I*255.0
+    IRet[IRet > 255] = 255
+    IRet[IRet < 0] = 0
+    IRet = np.array(IRet, dtype=np.uint8)
     scipy.misc.imsave(filename, IRet)
 
 def getPatches(I, dim):
@@ -46,7 +49,7 @@ def getCausalPatches(I, dim):
     P = P[:, :, 0:k]
     return P
 
-def doImageAnalogies(A, Ap, B, NLevels = 3, KSpatial = 5):
+def doImageAnalogies(A, Ap, B, NLevels = 3, KSpatials = [5, 5]):
     import pyflann
     #Make image pyramids
     AL = tuple(pyramid_gaussian(A, NLevels, downscale = 2))
@@ -63,13 +66,13 @@ def doImageAnalogies(A, Ap, B, NLevels = 3, KSpatial = 5):
 
     #Do multiresolution synthesis
     for level in range(NLevels, -1, -1):
+        KSpatial = KSpatials[-1]
+        if level == 0:
+            KSpatial = KSpatials[0]
         #Step 1: Make features
         APatches = getPatches(rgb2gray(AL[level]), KSpatial)
         ApPatches = getCausalPatches(rgb2gray(ApL[level]), KSpatial)
         X = np.concatenate((APatches, ApPatches), 2)
-        #Create 
-        annList = pyflann.FLANN()
-        annList.build_index(np.reshape(X, [X.shape[0]*X.shape[1], X.shape[2]]))
         B2 = None
         Bp2 = None
         if level < NLevels:
@@ -81,6 +84,8 @@ def doImageAnalogies(A, Ap, B, NLevels = 3, KSpatial = 5):
             X = np.concatenate((X, A2Patches, Ap2Patches), 2)
             B2 = scipy.misc.imresize(BL[level+1], BL[level].shape)
             Bp2 = scipy.misc.imresize(BpL[level+1], BpL[level].shape)
+        annList = pyflann.FLANN()
+        annList.build_index(np.reshape(X, [X.shape[0]*X.shape[1], X.shape[2]]))
 
         #Step 2: Fill in the first few scanLines to prevent the image
         #from getting crap in the beginning
@@ -115,7 +120,8 @@ def doImageAnalogies(A, Ap, B, NLevels = 3, KSpatial = 5):
                 idx = annList.nn_index(F)[0].flatten()
                 idx = np.unravel_index(idx, (X.shape[0], X.shape[1]))
                 BpL[level][i, j, :] = ApL[level][idx[0]+d, idx[1]+d, :]
-            writeImage(BpL[level], "%i.png"%level)
+            if i%20 == 0:
+                writeImage(BpL[level], "%i.png"%level)
     return BpL[0]
 
 
@@ -149,17 +155,23 @@ if __name__ == '__main__2':
 
 
 if __name__ == '__main__':
+    A = readImage("input/me-mask.png")
+    Ap = readImage("input/me.jpg")
+    B = readImage("input/cyclopsmask.png")
+    
+    """
     A = readImage("input/blur.A.bmp")
     Ap = readImage("input/blur.Ap.bmp")
     B = readImage("input/blur.B.bmp")
-    res = doImageAnalogies(A, Ap, B, 0)
-
-
-if __name__ == '__main__2':
+    """
+    
+    """
     A = readImage("input/texture1.A.jpg")
     Ap = readImage("input/texture1.Ap.bmp")
     B = readImage("input/texture1.B2.jpg")
-    res = doImageAnalogies(A, Ap, B, 1)
+    """
+
+    res = doImageAnalogies(A, Ap, B, 2)
 
 if __name__ == '__main__2':
     idx = np.arange(60)
