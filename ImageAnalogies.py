@@ -49,17 +49,56 @@ def getCausalPatches(I, dim):
     P = P[:, :, 0:k]
     return P
 
-def doImageAnalogies(A, Ap, B, NLevels = 3, KSpatials = [5, 5]):
+def getCoherenceMatch(X, x0, BpLidx, dim, i, j):
+    """
+    :param X: An MxNxDimFeatures array of feature vectors at each pixel
+    :param x0: The feature vector of the pixel that's being filled in
+    :param BpLidx: An MxN array of raveled indices from which pixels have
+        been drawn so far
+    :param dim: Dimension of patch
+    :param i: Row of pixel
+    :param j: Column of pixel
+    """
+    k = int((dim*dim-1)/2)
+    M = X.shape[0]
+    N = X.shape[1]
+    minDistSqr = np.inf
+    idxmin = [-1, -1]
+    [dJ, dI] = np.meshgrid(np.arange(dim), np.arange(dim))
+    dI = np.array(dI.flatten()[0:k], dtype = np.int64) - (dim-1)/2
+    dJ = np.array(dJ.flatten()[0:k], dtype = np.int64) - (dim-1)/2
+    #TODO: Vectorize code below
+    for n in range(dI.size):
+        #Indices of pixel picked for neighbor
+        ni = BpLidx[dI[n]+i, dJ[n]+j][0]
+        nj = BpLidx[dI[n]+i, dJ[n]+j][1]
+        if ni == -1 or nj == -1:
+            continue
+        ni = int(ni - dI[n])
+        nj = int(nj - dJ[n])
+        if ni < 0 or nj < 0 or ni >= M or nj >= N:
+            continue
+        x = X[ni, nj, :]
+        distSqr = np.sum((x - x0)**2)
+        if distSqr < minDistSqr:
+            minDistSqr = distSqr
+            idxmin = [ni, nj]
+    return (idxmin, minDistSqr)
+
+
+def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KSpatials = [5, 5]):
     import pyflann
     #Make image pyramids
     AL = tuple(pyramid_gaussian(A, NLevels, downscale = 2))
     ApL = tuple(pyramid_gaussian(Ap, NLevels, downscale = 2))
     BL = tuple(pyramid_gaussian(B, NLevels, downscale = 2))
     BpL = []
+    BpLidx = []
     print("BL:")
     for i in range(len(BL)):
         print(BL[i].shape)
         BpL.append(np.zeros(BL[i].shape))
+        BpLidx.append(-1*np.ones((BL[i].shape[0], BL[i].shape[1], 2)))
     print("AL:")
     for i in range(len(AL)):
         print(AL[i].shape)
@@ -73,6 +112,7 @@ def doImageAnalogies(A, Ap, B, NLevels = 3, KSpatials = [5, 5]):
         APatches = getPatches(rgb2gray(AL[level]), KSpatial)
         ApPatches = getCausalPatches(rgb2gray(ApL[level]), KSpatial)
         X = np.concatenate((APatches, ApPatches), 2)
+        print("X.shape = ", X.shape)
         B2 = None
         Bp2 = None
         if level < NLevels:
@@ -89,13 +129,14 @@ def doImageAnalogies(A, Ap, B, NLevels = 3, KSpatials = [5, 5]):
 
         #Step 2: Fill in the first few scanLines to prevent the image
         #from getting crap in the beginning
-        """
-        #TODO: Fix this
         if level == NLevels:
-            BpL[level] = scipy.misc.imresize(ApL[level], BpL[level].shape)
+            I = np.array(ApL[level]*255, dtype = np.uint8)
+            I = scipy.misc.imresize(I, BpL[level].shape)
+            BpL[level] = np.array(I/255.0, dtype = np.float64)
         else:
-            BpL[level] = scipy.misc.imresize(BpL[level+1], BpL[level].shape)
-        """
+            I = np.array(BpL[level+1]*255, dtype = np.uint8)
+            I = scipy.misc.imresize(I, BpL[level].shape)
+            BpL[level] = np.array(I/255.0, dtype = np.float64)
 
         #Step 3: Fill in the pixels in scanline order
         d = int((KSpatial-1)/2)
@@ -119,12 +160,47 @@ def doImageAnalogies(A, Ap, B, NLevels = 3, KSpatials = [5, 5]):
                 #DistSqrFn = XSqr + np.sum(F**2) - 2*X.dot(F)
                 idx = annList.nn_index(F)[0].flatten()
                 idx = np.unravel_index(idx, (X.shape[0], X.shape[1]))
+                if Kappa > 0:
+                #Compare with coherent pixel
+                    (idxc, distSqrc) = getCoherenceMatch(X, F, BpLidx[level], KSpatial, i, j)
+                    distSqr = np.sum((X[idx[0], idx[1]] - F)**2)
+                    fac = 1 + Kappa*(2.0**(level - NLevels))
+                    if distSqrc < distSqr*fac*fac:
+                        idx = idxc
+                BpLidx[level][i, j, :] = idx
                 BpL[level][i, j, :] = ApL[level][idx[0]+d, idx[1]+d, :]
             if i%20 == 0:
                 writeImage(BpL[level], "%i.png"%level)
+        plt.subplot(122)
+        plt.imshow(BpLidx[level][:, :, 0], cmap = 'Spectral')
+        plt.title("Y")
+        plt.subplot(121)
+        plt.imshow(BpLidx[level][:, :, 1], cmap = 'Spectral')
+        plt.title("X")
+        plt.savefig("%i_idx.png"%level, bbox_inches = 'tight')
     return BpL[0]
 
 
+if __name__ == '__main__':
+    """
+    A = readImage("input/me-mask.png")
+    Ap = readImage("input/me.jpg")
+    B = readImage("input/cyclopsmask.png")
+    """
+    
+    """
+    A = readImage("input/blur.A.bmp")
+    Ap = readImage("input/blur.Ap.bmp")
+    B = readImage("input/blur.B.bmp")
+    """
+    
+    #"""
+    A = readImage("input/texture1.A.jpg")
+    Ap = readImage("input/texture1.Ap.bmp")
+    B = readImage("input/texture1.B2.jpg")
+    #"""
+
+    res = doImageAnalogies(A, Ap, B, Kappa = 1.0, NLevels = 3)
 
 if __name__ == '__main__2':
     N = 40
@@ -151,33 +227,4 @@ if __name__ == '__main__2':
     plt.imshow(Bp[:, :, 0])
     plt.subplot(236)
     plt.imshow(Bp[:, :, 1] - B[:, :, 0])
-    plt.show()
-
-
-if __name__ == '__main__':
-    A = readImage("input/me-mask.png")
-    Ap = readImage("input/me.jpg")
-    B = readImage("input/cyclopsmask.png")
-    
-    """
-    A = readImage("input/blur.A.bmp")
-    Ap = readImage("input/blur.Ap.bmp")
-    B = readImage("input/blur.B.bmp")
-    """
-    
-    """
-    A = readImage("input/texture1.A.jpg")
-    Ap = readImage("input/texture1.Ap.bmp")
-    B = readImage("input/texture1.B2.jpg")
-    """
-
-    res = doImageAnalogies(A, Ap, B, 2)
-
-if __name__ == '__main__2':
-    idx = np.arange(60)
-    [I, J] = np.meshgrid(idx, idx)
-    X = (I-30)**2 + (J-30)**2 < 20**2
-    P = getPatches(X, 5)
-    sio.savemat("P.mat", {"P":P})
-    plt.imshow(X)
     plt.show()
