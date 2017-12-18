@@ -182,11 +182,11 @@ def doImageAnalogies(A, Ap, B, Kappa = 0.0, NLevels = 3, KSpatials = [5, 5]):
 
 
 if __name__ == '__main__':
-    """
+    #"""
     A = readImage("input/me-mask.png")
     Ap = readImage("input/me.jpg")
     B = readImage("input/cyclopsmask.png")
-    """
+    #"""
     
     """
     A = readImage("input/blur.A.bmp")
@@ -194,13 +194,13 @@ if __name__ == '__main__':
     B = readImage("input/blur.B.bmp")
     """
     
-    #"""
+    """
     A = readImage("input/texture1.A.jpg")
     Ap = readImage("input/texture1.Ap.bmp")
     B = readImage("input/texture1.B2.jpg")
-    #"""
+    """
 
-    res = doImageAnalogies(A, Ap, B, Kappa = 1.0, NLevels = 3)
+    res = doImageAnalogies(A, Ap, B, Kappa = 0.1, NLevels = 1)
 
 if __name__ == '__main__2':
     N = 40
