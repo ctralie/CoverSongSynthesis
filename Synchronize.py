@@ -1,5 +1,6 @@
 """
-Purpose: To 
+Purpose: To synchronize cover songs using my similarity fusion technique to do
+an alignment, and pyrubberband to appropriately time shift
 """
 import numpy as np
 import os
@@ -88,6 +89,8 @@ def syncBlocks(path, CSM, beats1, beats2, Fs, hopSize, XAudio1, XAudio2, BeatsPe
     return (XFinal, beatsFinal, scoresFinal)
 
 def expandBeats(beats, bSub):
+    if bSub == 1:
+        return beats
     import scipy.interpolate as interp
     idx = np.arange(beats.size)
     idxx = (np.arange(bSub*beats.size)/float(bSub))[0:-bSub+1]
@@ -201,6 +204,7 @@ def synchronize(filename1, filename2, hopSize, TempoBiases, bSub, FeatureParams,
 if __name__ == '__main__':
     Kappa = 0.1
     hopSize = 512
+    bSub = 1
     TempoBiases = [0]
     
     """
@@ -242,6 +246,6 @@ if __name__ == '__main__':
     FeatureParams = {'MFCCBeatsPerBlock':20, 'MFCCSamplesPerBlock':200, 'DPixels':50, 'ChromaBeatsPerBlock':20, 'ChromasPerBlock':40}
     CSMTypes = {'MFCCs':'Euclidean', 'SSMs':'Euclidean', 'Chromas':'CosineOTI'}
 
-    res = synchronize(filename1, filename2, hopSize, TempoBiases, 2, FeatureParams, CSMTypes, Kappa)
+    res = synchronize(filename1, filename2, hopSize, TempoBiases, bSub, FeatureParams, CSMTypes, Kappa)
     sio.wavfile.write("temp.wav", res['Fs'], res['X'])
     subprocess.call(["avconv", "-i", "temp.wav", "%sTrue.mp3"%fileprefix])
