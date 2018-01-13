@@ -38,6 +38,7 @@ def iSTFT(pS, W, H, winfunc = None):
     :param W: A window size
     :param H: A hopSize
     :param winfunc: Handle to a window function
+    :returns S: Spectrogram
     """
     #First put back the entire redundant STFT
     S = np.array(pS, dtype = np.complex)
@@ -68,6 +69,13 @@ def iSTFT(pS, W, H, winfunc = None):
     return X
 
 def pitchShiftSTFT(S, Fs, shift):
+    """
+    Use image interpolation to do spectogram shifting in the spectral domain
+    :param S: An NFreqsxNWindows spectrogram
+    :param Fs: Sample rate
+    :param shift: Number of halfsteps by which to shift
+    :returns: An NFreqsxNWindows shifted spectrogram
+    """
     M = S.shape[0]
     N = S.shape[1]
     bins0 = np.arange(M)
@@ -82,6 +90,15 @@ def pitchShiftSTFT(S, Fs, shift):
     return f(wins, freqs1)
 
 def griffinLimInverse(S, W, H, NIters = 10, winfunc = None):
+    """
+    Do Griffin Lim phase retrieval
+    :param S: An NFreqsxNWindows spectrogram
+    :param W: Window size used in STFT
+    :param H: Hop length used in STFT
+    :param NIters: Number of iterations to go through (default 10)
+    :winfunc: A handle to a window function (None by default, use halfsine)
+    :returns: An Nx1 real signal corresponding to phase retrieval
+    """
     eps = 2.2204e-16
     if not winfunc:
         winfunc = halfsine
@@ -96,6 +113,15 @@ def griffinLimInverse(S, W, H, NIters = 10, winfunc = None):
     return np.real(X)
 
 def griffinLimCQTInverse(C, Fs, H, bins_per_octave, NIters = 10):
+    """
+    Do Griffin Lim inverse using CQT instead of STFT
+    :param C: An NBinsxNWindows CQT
+    :param Fs: Sample rate
+    :param H: Hop length used in C
+    :param bins_per_octave: Number of bins per octave
+    :param NIters: Number of iterations to go through (default 10)
+    :returns: An Nx1 real signal corresponding to phase retrieval
+    """
     import librosa2
     eps = 2.2204e-16
     A = np.array(C, dtype = np.complex)

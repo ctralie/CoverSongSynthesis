@@ -86,9 +86,13 @@ def getPitchShiftedSpecs(X, Fs, W, H, shiftrange = 6):
             SRet = np.concatenate((SRet, S), 1)
     return SRet
 
-if __name__ == '__main__':
-    import librosa
-    import librosa.display
+def doJointNMF(pX1, pX2, K, NIters):
+    #Normalize each view so that the L1 matrix norm is 1
+    X1 = pX1/np.sum(pX1)
+    X2 = pX2/np.sum(pX2)
+    
+
+def testNMFMusaicingSimple():
     winSize = 2048
     hopSize = 256
 
@@ -106,3 +110,7 @@ if __name__ == '__main__':
     Y = griffinLimInverse(V2, winSize, hopSize)
     Y = Y/np.max(np.abs(Y))
     wavfile.write("letitbee.wav", Fs, Y)
+
+
+if __name__ == '__main__':
+    testNMFMusaicingSimple()
