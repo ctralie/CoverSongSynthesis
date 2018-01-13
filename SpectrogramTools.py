@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.interpolate
 from scipy.io import wavfile
+import pyrubberband as pyrb
 
 halfsine = lambda W: np.sin(np.pi*np.arange(W)/float(W))
 
@@ -88,6 +89,32 @@ def pitchShiftSTFT(S, Fs, shift):
     print("S.shape = ", S.shape)
     f = scipy.interpolate.interp2d(wins, freqs0, S, kind = 'linear')
     return f(wins, freqs1)
+
+def getPitchShiftedSpecs(X, Fs, W, H, shiftrange = 6):
+    """
+    Concatenate a bunch of pitch shifted versions of the spectrograms
+    of a sound, using the rubberband library
+    :param X: A mono audio array
+    :param Fs: Sample rate
+    :param W: Window size
+    :param H: Hop size
+    :param shiftrange: The number of halfsteps below and above which \
+        to shift the sound
+    :returns SRet: The concatenate spectrogram
+    """
+    SRet = np.array([])
+    for shift in range(-shiftrange, shiftrange+1):
+        print("Computing STFT pitch shift %i"%shift)
+        if shift == 0:
+            Y = np.array(X)
+        else:
+            Y = pyrb.pitch_shift(X, Fs, shift)
+        S = STFT(Y, W, H)
+        if SRet.size == 0:
+            SRet = S
+        else:
+            SRet = np.concatenate((SRet, S), 1)
+    return SRet
 
 def griffinLimInverse(S, W, H, NIters = 10, winfunc = None):
     """
