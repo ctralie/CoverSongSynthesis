@@ -3,6 +3,25 @@ import scipy.io as sio
 import matplotlib.pyplot as plt
 from SpectrogramTools import *
 from NMF import *
+from NMFJoint import *
+
+def testNMFJointSynthetic():
+    np.random.seed(100)
+    N = 20
+    M = 100
+    K = 6
+    H = np.random.rand(K, M)
+    W1 = np.random.rand(N, K)
+    W2 = np.random.rand(N, K)
+    X1 = W1.dot(H)
+    X2 = W2.dot(H)
+    lambdas = [0.01]*2
+    plotfn = lambda Xs, Us, Vs, VStar, errs: \
+            plotJointNMFwGT(Xs, Us, Vs, VStar, [W1, W2], [H.T, H.T], errs)
+    res = doJointNMF([X1, X2], lambdas, K, tol = 0.01, Verbose = True, plotfn = plotfn)
+    res['X1'] = X1
+    res['X2'] = X2
+    sio.savemat("JointNMF.mat", res)
 
 def testNMFMusaicingSimple():
     import librosa
@@ -27,4 +46,5 @@ def testNMFMusaicingSimple():
 
 
 if __name__ == '__main__':
-    testNMFMusaicingSimple()
+    #testNMFMusaicingSimple()
+    testNMFJointSynthetic()
