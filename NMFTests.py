@@ -27,18 +27,18 @@ def testNMF1DConvSynthetic():
     np.random.seed(100)
     N = 20
     M = 40
-    K = 2
-    L = 20
+    K = 3
+    L = 80
     T = 10
-    idxpara = 5+np.array(np.round(T*np.linspace(0, 1, T)**2), dtype = np.int64)
-    V = 0.5*np.ones((N, M))
+    V = 0.1*np.ones((N, M))
     V[5+np.arange(T), np.arange(T)] = 1
     V[5+np.arange(T), 5+np.arange(T)] = 0.5
-    V[idxpara, 10+np.arange(T)] = 1
+    V[15-np.arange(T), 10+np.arange(T)] = 1
     V[5+np.arange(T), 20+np.arange(T)] = 1
-    V[idxpara, 22+np.arange(T)] = 0.5
+    V[15-np.arange(T), 22+np.arange(T)] = 0.5
     V[5+np.arange(T), 10+np.arange(T)] += 0.7
-    doNMF1DConv(V, K, L, T, plotfn = plotNMF1DConvSpectra)
+    #doNMF(V, K*T, L, plotfn=plotNMFSpectra)
+    doNMF1DConv(V, K, T+5, L, plotfn=plotNMF1DConvSpectra)
 
 def outputNMFSounds(U1, U2, winSize, hopSize, Fs, fileprefix):
     for k in range(U1.shape[1]):
@@ -87,8 +87,8 @@ def testNMFJointSmoothCriminal():
     X, Fs = librosa.load("music/MJBad.mp3")
     X = X[0:Fs*30]
     S = np.abs(STFT(X, winSize, hopSize))
-    fn = lambda V, W, H, iter: plotNMFSpectra(V, W, H, iter, hopSize)
-    H = doNMF(S, U1, 10, plotfn = fn)
+    fn = lambda V, W, H, iter, errs: plotNMFSpectra(V, W, H, iter, errs, hopSize)
+    H = doNMFWFixed(S, U1, 10, plotfn = fn)
     SRes = U1.dot(H)
     XRes = griffinLimInverse(SRes, winSize, hopSize, NIters = 10)
     SResCover = U2.dot(H)
@@ -108,8 +108,8 @@ def testNMFMusaicingSimple():
     V = np.abs(STFT(X, winSize, hopSize))
 
     #librosa.display.specshow(librosa.amplitude_to_db(H), y_axis = 'log', x_axis = 'time')
-    fn = lambda V, W, H, iter: plotNMFSpectra(V, W, H, iter, hopSize)
-    H = doNMF(V, W, 10, plotfn = fn)
+    fn = lambda V, W, H, iter, errs: plotNMFSpectra(V, W, H, iter, errs, hopSize)
+    H = doNMFWFixed(V, W, 10, plotfn = fn)
     V2 = W.dot(H)
 
     print("Doing phase retrieval...")
