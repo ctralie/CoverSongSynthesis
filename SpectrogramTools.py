@@ -6,13 +6,16 @@ import pyrubberband as pyrb
 
 halfsine = lambda W: np.sin(np.pi*np.arange(W)/float(W))
 
-def STFT(X, W, H, winfunc = None):
+def STFT(X, W, H, winfunc = None, useLibrosa = True):
     """
     :param X: An Nx1 audio signal
     :param W: A window size
     :param H: A hopSize
     :param winfunc: Handle to a window function
     """
+    if useLibrosa:
+        import librosa
+        return librosa.core.stft(X, n_fft=W, hop_length=H, window = 'blackman')
     Q = W/H
     if Q - np.floor(Q) > 0:
         print('Warning: Window size is not integer multiple of hop size')
@@ -33,7 +36,7 @@ def STFT(X, W, H, winfunc = None):
         S = S[0:int((W-1)/2)+1, :]
     return S
 
-def iSTFT(pS, W, H, winfunc = None):
+def iSTFT(pS, W, H, winfunc = None, useLibrosa = True):
     """
     :param pS: An NBins x NWindows spectrogram
     :param W: A window size
@@ -41,6 +44,9 @@ def iSTFT(pS, W, H, winfunc = None):
     :param winfunc: Handle to a window function
     :returns S: Spectrogram
     """
+    if useLibrosa:
+        import librosa
+        return librosa.core.istft(pS, hop_length = H, window = 'blackman')
     #First put back the entire redundant STFT
     S = np.array(pS, dtype = np.complex)
     if W%2 == 0:
@@ -166,7 +172,6 @@ def griffinLimCQTInverse(C, Fs, H, bins_per_octave, NIters = 10):
     return np.real(X)
 
 def testPitchShift(X, Fs, W, H, shift, filename):
-    import librosa
     W = 2048
     H = 128
     S = np.abs(STFT(X, W, H))
@@ -212,7 +217,8 @@ if __name__ == '__main__':
     noctaves = 7
     y = pyrb.pitch_shift(X, Fs, shift)
     wavfile.write("rubberbandshift%i.wav"%shift, Fs, y)
-    #testPitchShift(X, Fs, 2048, 128, shift, "gfshift%i_stft.wav"%shift)
-    shift = 0
+    testPitchShift(X, Fs, 2048, 128, shift, "gfshift%i_stft.wav"%shift)
+    """
     testPitchShiftCQT(y, Fs, 128, 36, shift, \
             "gfshift%i_cqt_%ioctaves.wav"%(shift, noctaves), noctaves)
+    """

@@ -9,6 +9,15 @@ import scipy.io as sio
 import matplotlib.pyplot as plt
 
 def plotJointNMFwGT(Xs, Us, Vs, VStar, UsGT, VsGT, errs):
+    """
+    :param Xs: List of X matrices that are being factorized
+    :param Us: List of U (template) matrices
+    :param Vs: List of matrices holding loadings
+    :param VStar: Consensus loading matrix
+    :param UsGT: Ground truth Us
+    :param VsGT: Ground truth Vs
+    :param errs: List of convergence errors on iterations so far
+    """
     N = len(Xs)
     for i in range(N):
         #Subplots: X, U*V, U, V, UGT, VGT
@@ -44,6 +53,49 @@ def plotJointNMFwGT(Xs, Us, Vs, VStar, UsGT, VsGT, errs):
     plt.semilogy(np.arange(len(errs)), errs)
     plt.scatter([len(errs)-1], [errs[-1]])
     plt.title("Convergence Errors")
+    plt.xlabel("Iteration Number")
+    plt.ylabel("Error")
+
+def plotJointNMFSpectra(Xs, Us, Vs, VStar, errs, hopLength):
+    """
+    Plot NMF iterations on a log scale, showing V, H, and W*H
+    :param Xs: List of X matrices that are being factorized
+    :param Us: List of U (template) matrices
+    :param Vs: List of matrices holding loadings
+    :param VStar: Consensus loading matrix
+    :param errs: List of convergence errors on iterations so far
+    :param hopLength: The hop length (for plotting)
+    """
+    import librosa
+    import librosa.display
+    ncols = 4
+    N = len(Xs)
+    for i in range(N):
+        #Subplots: X, U*V, U, V, UGT, VGT
+        plt.subplot(N+1, ncols, ncols*i + 1)
+        librosa.display.specshow(librosa.amplitude_to_db(Xs[i]), hop_length = hopLength, \
+                                y_axis = 'log', x_axis = 'time')
+        plt.title("X%i"%i)
+        plt.subplot(N+1, ncols, ncols*i + 2)
+        librosa.display.specshow(librosa.amplitude_to_db(Us[i].dot(Vs[i].T)), \
+                                hop_length = hopLength, y_axis = 'log', x_axis = 'time')
+        plt.title("U%i*V%i^T"%(i, i))
+        plt.subplot(N+1, ncols, ncols*i + 3)
+        librosa.display.specshow(librosa.amplitude_to_db(Us[i]), hop_length = hopLength, \
+                                y_axis = 'log', x_axis = 'time')
+        plt.title("U%i"%i)
+        plt.subplot(N+1, ncols, ncols*i + 4)
+        plt.imshow(librosa.amplitude_to_db(Vs[i]), cmap = 'afmhot', \
+                interpolation = 'nearest', aspect = 'auto')  
+        plt.title("V%i"%i)
+    plt.subplot(N+1, ncols, ncols*N + 4)
+    plt.imshow(librosa.amplitude_to_db(VStar), cmap = 'afmhot', \
+                aspect = 'auto', interpolation = 'nearest')
+    plt.title("V*")
+    plt.subplot2grid((N+1, ncols), (N, 0), rowspan = 1, colspan = 3)
+    plt.semilogy(np.arange(len(errs)), errs)
+    plt.scatter([len(errs)-1], [errs[-1]])
+    plt.title("Convergence Errors")      
 
 def jointNMFObjOuter(Xs, Us, Vs, VStar, lambdas):
     Qs = [np.sum(U, 0) for U in Us]
@@ -126,11 +178,11 @@ def doJointNMF(pXs, lambdas, K, tol = 0.05, Verbose = False, plotfn = None):
         VStar /= np.sum(lambdas)
         #Check for convergence
         errsOuter.append(jointNMFObjOuter(Xs, Us, Vs, VStar, lambdas))
-        if plotfn:
+        if getImprovement(errsOuter, Verbose) < tol:
+            convergedOuter = True
+        if plotfn:# and convergedOuter:# (len(errsOuter)%10 == 0 or convergedOuter):
             plt.clf()
             plotfn(Xs, Us, Vs, VStar, errsOuter)
             plt.savefig("JointNMF%i.png"%len(errsOuter[0:-1]))
-        if getImprovement(errsOuter, Verbose) < tol:
-            convergedOuter = True
     return {'Vs':Vs, 'Us':Us, 'VStar':VStar, 'Xs':Xs, 'errsOuter':errsOuter}
 
