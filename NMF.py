@@ -2,8 +2,21 @@ import numpy as np
 import scipy.io as sio
 import matplotlib.pyplot as plt
 
-def getKLError(V, WH):
-    return np.sum(V*np.log(V/WH)-V+WH)
+def getKLError(V, WH, eps = 1e-10):
+    """
+    Return the Kullback-Liebler diverges between V and W*H
+    """
+    denom = np.array(WH)
+    denom[denom == 0] = 1
+    arg = V/denom
+    arg[arg < eps] = eps
+    return np.sum(V*np.log(arg)-V+WH)
+
+def getEuclideanError(V, WH):
+    """
+    Return the Frobenius norm between V and W*H
+    """
+    return np.sum((V-WH)**2)
 
 def plotNMFSpectra(V, W, H, iter, errs, hopLength = -1):
     """
@@ -113,21 +126,45 @@ def doNMFWFixed(V, W, L, simple = True, plotfn = None):
             plt.savefig("NMFWFixed%i.png"%(l+1), bbox_inches = 'tight')
     return H
 
-def shiftMatLeftRight(X, di):
-    if di == 0:
-        return X
-    XRet = 0*X
+def shiftMatLRUD(X, di=0, dj=0):
+    XRet = np.array(X)
+    #Shift up/down first
     if di > 0:
-        XRet[:, di::] = X[:, 0:-di]
-    else:
-        XRet[:, 0:di] = X[:, -di::]
+        XRet[di::, :] = X[0:-di, :]
+        XRet[0:di, :] = 0
+    elif di < 0:
+        XRet[0:di, :] = X[-di::, :]
+        XRet[di::, :] = 0
+    #Now shift left/right
+    if dj > 0:
+        XRet[:, dj::] = XRet[:, 0:-dj]
+        XRet[:, 0:dj] = 0
+    elif dj < 0:
+        XRet[:, 0:dj] = XRet[:, -dj::]
+        XRet[:, dj::] = 0
     return XRet
     
-
 def multiplyConv1D(W, H):
+    """
+    Perform a convolutive matrix multiplication in time
+    """
     Lam = np.zeros((W.shape[0], H.shape[1]))
     for t in range(W.shape[2]):
-        Lam += W[:, :, t].dot(shiftMatLeftRight(H, t))
+        Lam += W[:, :, t].dot(shiftMatLRUD(H, dj=t))
+    return Lam
+
+def multiplyConv2D(W, H):
+    """
+    Perform a convolutive matrix multiplication in time and frequency
+    """
+    Lam = np.zeros((W.shape[0], H.shape[1]))
+    for t in range(W.shape[2]):
+        for f in range(H.shape[2]):
+            Wt = np.array(W[:, :, t])
+            Wt = shiftMatLRUD(Wt, di=f)
+            Hf = np.array(H[:, :, f])
+            Hf = shiftMatLRUD(Hf, dj=t)
+            Lam += Wt.dot(Hf)
     return Lam
 
 def doNMF1DConv(V, K, T, L, plotfn = None):
@@ -159,24 +196,96 @@ def doNMF1DConv(V, K, T, L, plotfn = None):
         print("NMF iteration %i of %i"%(l+1, L))            
         #KL Divergence Version
         WH = multiplyConv1D(W, H)
+        WH[WH == 0] = 1
         VLam = V/WH
         HNew = 0*H
         for t in range(T):
             thisW = W[:, :, t]
-            fac = (thisW.T).dot(shiftMatLeftRight(VLam, -t))/np.sum(thisW, 0)[:, None]
+            denom = np.sum(thisW, 0)[:, None]
+            denom[denom == 0] = 1
+            fac = (thisW.T).dot(shiftMatLRUD(VLam, dj=-t))/denom
             HNew += H*fac
         H = HNew/T
         WH = multiplyConv1D(W, H)
+        WH[WH == 0] = 1
         VLam = V/WH
         for t in range(T):
-            HShift = shiftMatLeftRight(H, t)
-            W[:, :, t] *= (VLam.dot(HShift.T))/np.sum(H, 1)[None, :]
-        WH = multiplyConv1D(W, H)
-        errs.append(getKLError(V, WH))
+            HShift = shiftMatLRUD(H, dj=t)
+            denom = np.sum(H, 1)[None, :]
+            denom[denom == 0] = 1
+            W[:, :, t] *= (VLam.dot(HShift.T))/denom
+        errs.append(getKLError(V, multiplyConv1D(W, H)))
         if plotfn and (l+1)%10 == 0:
             plt.clf()
             plotfn(V, W, H, l+1, errs)
             plt.savefig("NMF1DConv_%i.png"%(l+1), bbox_inches = 'tight')
+    return (W, H)
+
+def doNMF2DConv(V, K, T, F, L, plotfn = None):
+    """
+    Implementing the Euclidean 2D NMF technique described in 
+    "Nonnegative Matrix Factor 2-D Deconvolution
+        for Blind Single Channel Source Separation"
+    :param V: An N x M target matrix
+    :param K: Number of latent factors
+    :param T: Time extent of W matrices
+    :param F: Frequency extent of H matrices
+    :param L: Number of iterations
+    :param plotfn: A function used to plot each iteration, which should\
+        take the arguments (V, W, H, iter)
+    :returns (W, H): \
+        W is an NxKxT matrix of K sources over spatiotemporal spans NxT\
+        H is a KxMxF matrix of source activations for each submatrix of W\
+            over F transpositions over M time
+    """
+    N = V.shape[0]
+    M = V.shape[1]
+    W = np.random.rand(N, K, T)
+    H = np.random.rand(K, M, F)
+    errs = [getEuclideanError(V, multiplyConv2D(W, H))]
+    if plotfn:
+        res=4
+        plt.figure(figsize=((2+K)*res, 2*res))
+        plotfn(V, W, H, 0, errs) 
+        plt.savefig("NMF2DConv_%i.png"%0, bbox_inches = 'tight')
+    for l in range(L):
+        print("NMF iteration %i of %i"%(l+1, L))
+        #Step 1: Update Ws
+        WH = multiplyConv2D(W, H)
+        WH[WH == 0] = 1
+        VLam = V/WH
+        WNew = np.zeros(W.shape)
+        for f in range(F):
+            thisV = shiftMatLRUD(V, di=-f)
+            thisVLam = shiftMatLRUD(VLam, di=-f)
+            for t in range(T):
+                thisH = shiftMatLRUD(H[:, :, f], dj=t)
+                denom = thisVLam.dot(thisH.T)
+                denom[denom == 0] = 1
+                fac = thisV.dot(thisH.T)/(denom)
+                WNew[:, :, t] += W[:, :, t]*fac
+        W = WNew/F
+
+        #Step 2: Update Hs
+        WH = multiplyConv2D(W, H)
+        WH[WH == 0] = 1
+        VLam = V/WH
+        HNew = np.zeros(H.shape)
+        for t in range(T):
+            thisV = shiftMatLRUD(V, dj=-t)
+            thisVLam = shiftMatLRUD(VLam, dj=-t)
+            for f in range(F):
+                thisW = shiftMatLRUD(W[:, :, t], di=f)
+                denom = (thisW.T).dot(thisVLam)
+                denom[denom == 0] = 1
+                fac = (thisW.T).dot(thisV)/denom
+                HNew[:, :, f] += H[:, :, f]*fac
+        H = HNew/F
+        errs.append(getEuclideanError(V, multiplyConv2D(W, H)))
+        if plotfn:# and (l+1)%10 == 0:
+            plt.clf()
+            plotfn(V, W, H, l+1, errs)
+            plt.savefig("NMF2DConv_%i.png"%(l+1), bbox_inches = 'tight')
     return (W, H)
 
 def plotNMF1DConvSpectra(V, W, H, iter, errs, hopLength = -1):
@@ -222,11 +331,62 @@ def plotNMF1DConvSpectra(V, W, H, iter, errs, hopLength = -1):
     plt.title("Errors")
     plt.title("W*H Iteration %i"%iter) 
 
+def plotNMF2DConvSpectra(V, W, H, iter, errs, hopLength = -1):
+    """
+    Plot NMF iterations on a log scale, showing V, H, and W*H
+    :param V: An N x M target
+    :param W: An N x K x T source/corpus matrix
+    :returns H: A K x M x F matrix of source activations
+    :param iter: The iteration number
+    :param errs: Errors over time
+    :param hopLength: The hop length (for plotting)
+    """
+    import librosa
+    import librosa.display
+    K = W.shape[1]
+
+    plt.subplot(2, 2+K, 1)
+    if hopLength > -1:
+        librosa.display.specshow(librosa.amplitude_to_db(V), hop_length = hopLength, \
+                                    y_axis = 'log', x_axis = 'time')
+    else:
+        plt.imshow(V, cmap = 'afmhot', interpolation = 'nearest', aspect = 'auto')
+        plt.colorbar()
+    plt.title("V")
+    plt.subplot(2, 2+K, 3+K)
+    WH = multiplyConv2D(W, H)
+    if hopLength > -1:
+        librosa.display.specshow(WH, hop_length = hopLength, y_axis = 'log', x_axis = 'time')
+    else:
+        plt.imshow(WH, cmap = 'afmhot', interpolation = 'nearest', aspect = 'auto')
+        plt.colorbar()
+    plt.title("W*H Iteration %i"%iter) 
+
+    for k in range(K):
+        plt.subplot(2, 2+K, 2+k)
+        plt.imshow(W[:, k, :], cmap = 'afmhot', \
+                interpolation = 'nearest', aspect = 'auto')  
+        plt.colorbar()
+        plt.title("W%i"%k)
+
+        plt.subplot(2, 2+K, (2+K)+2+k)
+        plt.imshow(H[k, :, :].T, cmap = 'afmhot', \
+                interpolation = 'nearest', aspect = 'auto')
+        plt.title("H%i"%k)
+
+    plt.subplot(2, 2+K, 2+K)
+    plt.semilogy(np.array(errs))
+    plt.title("Errors")
+
 if __name__ == '__main__':
     np.random.seed(10)
     X = np.random.randn(5, 10)
-    plt.subplot(121)
-    plt.imshow(shiftMatLeftRight(X, 3), interpolation = 'none')
-    plt.subplot(122)
-    plt.imshow(shiftMatLeftRight(X, -3), interpolation = 'none')
+    plt.subplot(141)
+    plt.imshow(X, interpolation = 'none')
+    plt.subplot(142)
+    plt.imshow(shiftMatLRUD(X, dj=3), interpolation = 'none')
+    plt.subplot(143)
+    plt.imshow(shiftMatLRUD(X, di=-2, dj=-3), interpolation = 'none')
+    plt.subplot(144)
+    plt.imshow(shiftMatLRUD(X, di=2, dj=-3), interpolation = 'none')
     plt.show()

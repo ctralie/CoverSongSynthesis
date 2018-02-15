@@ -30,7 +30,7 @@ def testNMF1DConvSynthetic():
     K = 3
     L = 80
     T = 10
-    V = 0.1*np.ones((N, M))
+    V = 0*np.ones((N, M))
     V[5+np.arange(T), np.arange(T)] = 1
     V[5+np.arange(T), 5+np.arange(T)] = 0.5
     V[15-np.arange(T), 10+np.arange(T)] = 1
@@ -39,6 +39,23 @@ def testNMF1DConvSynthetic():
     V[5+np.arange(T), 10+np.arange(T)] += 0.7
     #doNMF(V, K*T, L, plotfn=plotNMFSpectra)
     doNMF1DConv(V, K, T+5, L, plotfn=plotNMF1DConvSpectra)
+
+def testNMF2DConvSynthetic():
+    np.random.seed(100)
+    N = 20
+    M = 40
+    K = 3
+    L = 80
+    T = 10
+    F = 5
+    V = 0.1*np.ones((N, M))
+    V[5+np.arange(T), np.arange(T)] = 1
+    V[8+np.arange(T), 5+np.arange(T)] = 0.5
+    V[15-np.arange(T), 10+np.arange(T)] = 1
+    V[6+np.arange(T), 20+np.arange(T)] = 1
+    V[10-np.arange(T), 22+np.arange(T)] = 0.5
+    V[10+np.arange(T), 10+np.arange(T)] += 0.7
+    doNMF2DConv(V, K, T, F, L, plotfn=plotNMF2DConvSpectra)
 
 def outputNMFSounds(U1, U2, winSize, hopSize, Fs, fileprefix):
     for k in range(U1.shape[1]):
@@ -122,4 +139,5 @@ if __name__ == '__main__':
     #testNMFMusaicingSimple()
     #testNMFJointSynthetic()
     #testNMFJointSmoothCriminal()
-    testNMF1DConvSynthetic()
+    #testNMF1DConvSynthetic()
+    testNMF2DConvSynthetic()
