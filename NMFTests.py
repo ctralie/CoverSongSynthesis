@@ -37,14 +37,15 @@ def testNMF1DConvSynthetic():
     V[5+np.arange(T), 20+np.arange(T)] = 1
     V[15-np.arange(T), 22+np.arange(T)] = 0.5
     V[5+np.arange(T), 10+np.arange(T)] += 0.7
+    V *= 1000
     #doNMF(V, K*T, L, plotfn=plotNMFSpectra)
     doNMF1DConv(V, K, T+5, L, plotfn=plotNMF1DConvSpectra)
 
 def testNMF2DConvSynthetic():
-    np.random.seed(100)
+    np.random.seed(300)
     N = 20
     M = 40
-    K = 3
+    K = 2
     L = 80
     T = 10
     F = 5

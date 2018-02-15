@@ -251,41 +251,41 @@ def doNMF2DConv(V, K, T, F, L, plotfn = None):
     for l in range(L):
         print("NMF iteration %i of %i"%(l+1, L))
         #Step 1: Update Ws
-        WH = multiplyConv2D(W, H)
-        WH[WH == 0] = 1
-        VLam = V/WH
-        WNew = np.zeros(W.shape)
+        VLam = multiplyConv2D(W, H)
+        #VLam[VLam == 0] = 1
+        WNums = np.zeros(W.shape)
+        WDenoms = np.zeros(W.shape)
         for f in range(F):
             thisV = shiftMatLRUD(V, di=-f)
             thisVLam = shiftMatLRUD(VLam, di=-f)
             for t in range(T):
                 thisH = shiftMatLRUD(H[:, :, f], dj=t)
-                denom = thisVLam.dot(thisH.T)
-                denom[denom == 0] = 1
-                fac = thisV.dot(thisH.T)/(denom)
-                WNew[:, :, t] += W[:, :, t]*fac
-        W = WNew/F
+                WNums[:, :, t] += thisV.dot(thisH.T)
+                WDenoms[:, :, t] += thisVLam.dot(thisH.T)
+        #WDenoms[WDenoms == 0] = 1
+        W = W*(WNums/WDenoms)
 
         #Step 2: Update Hs
-        WH = multiplyConv2D(W, H)
-        WH[WH == 0] = 1
-        VLam = V/WH
-        HNew = np.zeros(H.shape)
+        VLam = multiplyConv2D(W, H)
+        #VLam[VLam == 0] = 1
+        HNums = np.zeros(H.shape)
+        HDenoms = np.zeros(H.shape)
         for t in range(T):
             thisV = shiftMatLRUD(V, dj=-t)
             thisVLam = shiftMatLRUD(VLam, dj=-t)
             for f in range(F):
                 thisW = shiftMatLRUD(W[:, :, t], di=f)
-                denom = (thisW.T).dot(thisVLam)
-                denom[denom == 0] = 1
-                fac = (thisW.T).dot(thisV)/denom
-                HNew[:, :, f] += H[:, :, f]*fac
-        H = HNew/F
+                HNums[:, :, f] += (thisW.T).dot(thisV)
+                HDenoms[:, :, f] += (thisW.T).dot(thisVLam)
+        #HDenoms[HDenoms == 0] = 1
+        H = H*(HNums/HDenoms)
         errs.append(getEuclideanError(V, multiplyConv2D(W, H)))
-        if plotfn:# and (l+1)%10 == 0:
+        if plotfn and (l+1) == L:
             plt.clf()
             plotfn(V, W, H, l+1, errs)
             plt.savefig("NMF2DConv_%i.png"%(l+1), bbox_inches = 'tight')
+        
+        #TODO: Balance normalize W and H
     return (W, H)
 
 def plotNMF1DConvSpectra(V, W, H, iter, errs, hopLength = -1):
@@ -372,6 +372,7 @@ def plotNMF2DConvSpectra(V, W, H, iter, errs, hopLength = -1):
         plt.subplot(2, 2+K, (2+K)+2+k)
         plt.imshow(H[k, :, :].T, cmap = 'afmhot', \
                 interpolation = 'nearest', aspect = 'auto')
+        plt.colorbar()
         plt.title("H%i"%k)
 
     plt.subplot(2, 2+K, 2+K)
@@ -382,7 +383,7 @@ if __name__ == '__main__':
     np.random.seed(10)
     X = np.random.randn(5, 10)
     plt.subplot(141)
-    plt.imshow(X, interpolation = 'none')
+    plt.imshow(shiftMatLRUD(X, dj=-3), interpolation = 'none')
     plt.subplot(142)
     plt.imshow(shiftMatLRUD(X, dj=3), interpolation = 'none')
     plt.subplot(143)
