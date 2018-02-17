@@ -96,6 +96,53 @@ def pitchShiftSTFT(S, Fs, shift):
     f = scipy.interpolate.interp2d(wins, freqs0, S, kind = 'linear')
     return f(wins, freqs1)
 
+def getMelFilterbank(Fs, winSize, noctaves = 7, binsperoctave = 24):
+    """
+    Return a mel-spaced triangular filterbank
+    :param Fs: Audio sample rate
+    :param winSize: Window size of associated STFT
+    :param noctaves: Number of octaves to cover, starting at A0
+    :param binsperoctave: Number of bins per octave
+    :returns melfbank: An NBands x NSpectrumSamples matrix
+        with each filter per row
+    """
+    fmin = 55.0
+    fmax = fmin*(2.0**noctaves)
+    NBands = noctaves*binsperoctave
+    NSpectrumSamples = int(winSize/2)+1
+
+    melbounds = np.array([fmin, fmax])
+    melbounds = 1125*np.log(1 + melbounds/700.0)
+    mel = np.linspace(melbounds[0], melbounds[1], NBands+2)
+    binfreqs = 700*(np.exp(mel/1125.0) - 1)
+    binbins = np.floor(((winSize-1)/float(Fs))*binfreqs) #Floor to the nearest bin
+    binbins = np.array(binbins, dtype=np.int64)
+
+    #Step 2: Create mel triangular filterbank
+    melfbank = np.zeros((NBands, NSpectrumSamples))
+    for i in range(1, NBands+1):
+        thisbin = binbins[i]
+        lbin = binbins[i-1]
+        rbin = thisbin + (thisbin - lbin)
+        rbin = binbins[i+1]
+        melfbank[i-1, lbin:thisbin+1] = np.linspace(0, 1, 1 + (thisbin - lbin))
+        melfbank[i-1, thisbin:rbin+1] = np.linspace(1, 0, 1 + (rbin - thisbin))
+    melfbank = melfbank/np.sum(melfbank, 1)[:, None]
+    return melfbank
+
+def warpSTFTMel(S, Fs, winSize):
+    M = getMelFilterbank(Fs, winSize)
+    plt.show()
+    return M.dot(S)
+
+def unwarpSTFTMel(X, Fs, winSize):
+    M = getMelFilterbank(Fs, winSize)
+    MEnergy = np.sum(M, 0)
+    idxpass = (MEnergy == 0)
+    MEnergy[idxpass] = 1
+    M = M/MEnergy[None, :]
+    return (M.T).dot(X)
+
 def getPitchShiftedSpecs(X, Fs, W, H, shiftrange = 6):
     """
     Concatenate a bunch of pitch shifted versions of the spectrograms

@@ -280,11 +280,10 @@ def doNMF2DConv(V, K, T, F, L, plotfn = None):
         #HDenoms[HDenoms == 0] = 1
         H = H*(HNums/HDenoms)
         errs.append(getEuclideanError(V, multiplyConv2D(W, H)))
-        if plotfn and (l+1) == L:
+        if plotfn and (l+1)%10 == 0:
             plt.clf()
             plotfn(V, W, H, l+1, errs)
             plt.savefig("NMF2DConv_%i.png"%(l+1), bbox_inches = 'tight')
-        
         #TODO: Balance normalize W and H
     return (W, H)
 
@@ -356,7 +355,8 @@ def plotNMF2DConvSpectra(V, W, H, iter, errs, hopLength = -1):
     plt.subplot(2, 2+K, 3+K)
     WH = multiplyConv2D(W, H)
     if hopLength > -1:
-        librosa.display.specshow(WH, hop_length = hopLength, y_axis = 'log', x_axis = 'time')
+        librosa.display.specshow(librosa.amplitude_to_db(WH), hop_length = hopLength, \
+            y_axis = 'log', x_axis = 'time')
     else:
         plt.imshow(WH, cmap = 'afmhot', interpolation = 'nearest', aspect = 'auto')
         plt.colorbar()
@@ -364,9 +364,13 @@ def plotNMF2DConvSpectra(V, W, H, iter, errs, hopLength = -1):
 
     for k in range(K):
         plt.subplot(2, 2+K, 2+k)
-        plt.imshow(W[:, k, :], cmap = 'afmhot', \
-                interpolation = 'nearest', aspect = 'auto')  
-        plt.colorbar()
+        if hopLength > -1:
+            librosa.display.specshow(librosa.amplitude_to_db(W[:, k, :]), \
+                hop_length=hopLength, y_axis='log', x_axis='time')
+        else:
+            plt.imshow(W[:, k, :], cmap = 'afmhot', \
+                    interpolation = 'nearest', aspect = 'auto')  
+            plt.colorbar()
         plt.title("W%i"%k)
 
         plt.subplot(2, 2+K, (2+K)+2+k)
@@ -376,7 +380,10 @@ def plotNMF2DConvSpectra(V, W, H, iter, errs, hopLength = -1):
         plt.title("H%i"%k)
 
     plt.subplot(2, 2+K, 2+K)
-    plt.semilogy(np.array(errs))
+    errs = np.array(errs)
+    if len(errs) > 1:
+        errs = errs[1::]
+    plt.semilogy(errs)
     plt.title("Errors")
 
 if __name__ == '__main__':

@@ -57,6 +57,7 @@ def testNMF2DConvSynthetic():
     V[10-np.arange(T), 22+np.arange(T)] = 0.5
     V[10+np.arange(T), 10+np.arange(T)] += 0.7
     doNMF2DConv(V, K, T, F, L, plotfn=plotNMF2DConvSpectra)
+    doNMF1DConv(V, K, T, L, plotfn=plotNMF1DConvSpectra)
 
 def outputNMFSounds(U1, U2, winSize, hopSize, Fs, fileprefix):
     for k in range(U1.shape[1]):
@@ -136,9 +137,35 @@ def testNMFMusaicingSimple():
     wavfile.write("letitbee.wav", Fs, Y)
 
 
+def testNMF2DMusic():
+    import librosa2
+    from scipy.io import wavfile
+    X, Fs = librosa2.load("music/SmoothCriminalMJ.mp3")
+    X = X[Fs*15:Fs*30]
+    hopSize = 128
+    bins_per_octave = 36
+    noctaves = 7
+    C = librosa2.cqt(y=X, sr=Fs, hop_length=hopSize, n_bins=noctaves*bins_per_octave,\
+               bins_per_octave=bins_per_octave)
+    C = np.abs(C)
+    plotfn = lambda V, W, H, iter, errs: plotNMF2DConvSpectra(V, W, H, iter, errs, hopLength = hopSize)
+    (W, H) = doNMF2DConv(C, 2, T=16, F=18, L=80, plotfn=plotfn)
+    C = multiplyConv2D(W, H)
+    print("C.shape = ", C.shape)
+    y_hat = griffinLimCQTInverse(C, Fs, hopSize, bins_per_octave, NIters=10)
+    y_hat = y_hat/np.max(np.abs(y_hat))
+    sio.wavfile.write("smoothcriminalNMF.wav", Fs, y_hat)
+
+    #Also invert each Wt
+    for k in range(W.shape[1]):
+        y_hat = griffinLimCQTInverse(W[:, k, :], Fs, hopSize, bins_per_octave, NIters=10)
+        y_hat = y_hat/np.max(np.abs(y_hat))
+        sio.wavfile.write("smoothcriminalW%i.wav"%k, Fs, y_hat)
+
 if __name__ == '__main__':
     #testNMFMusaicingSimple()
     #testNMFJointSynthetic()
     #testNMFJointSmoothCriminal()
     #testNMF1DConvSynthetic()
-    testNMF2DConvSynthetic()
+    #testNMF2DConvSynthetic()
+    testNMF2DMusic()
