@@ -259,13 +259,24 @@ def testPitchShiftCQT(X, Fs, H, bins_per_octave, shift, filename, noctaves):
 if __name__ == '__main__':
     import librosa
     import pyrubberband as pyrb
-    X, Fs = librosa.load("music/Beatles_LetItBe.mp3")
+    X, Fs = librosa.load("music/Beatles_LetItBe.mp3", sr=44100)
+    print("Fs = ", Fs)
     shift = 2
     noctaves = 7
     y = pyrb.pitch_shift(X, Fs, shift)
     wavfile.write("rubberbandshift%i.wav"%shift, Fs, y)
     testPitchShift(X, Fs, 2048, 128, shift, "gfshift%i_stft.wav"%shift)
-    """
     testPitchShiftCQT(y, Fs, 128, 36, shift, \
             "gfshift%i_cqt_%ioctaves.wav"%(shift, noctaves), noctaves)
-    """
+
+    from NMF import shiftMatLRUD
+    winSize = 4096
+    hopSize = 256
+    S = STFT(X, winSize, hopSize)
+    S = np.abs(S)
+    M = warpSTFTMel(S, Fs, winSize)
+    M = shiftMatLRUD(M, di=shift*2)
+    S = unwarpSTFTMel(M, Fs, winSize)
+    y = griffinLimInverse(S, winSize, hopSize)
+    y = y/np.max(np.abs(y))
+    wavfile.write("melshift%i.wav"%shift, Fs, y)

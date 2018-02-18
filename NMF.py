@@ -167,7 +167,7 @@ def multiplyConv2D(W, H):
             Lam += Wt.dot(Hf)
     return Lam
 
-def doNMF1DConv(V, K, T, L, plotfn = None):
+def doNMF1DConv(V, K, T, L, W = np.array([]), plotfn = None):
     """
     Implementing the technique described in 
     "Non-negative Matrix Factor Deconvolution; Extraction of
@@ -184,7 +184,11 @@ def doNMF1DConv(V, K, T, L, plotfn = None):
     """
     N = V.shape[0]
     M = V.shape[1]
-    W = np.random.rand(N, K, T)
+    WFixed = False
+    if W.size == 0:
+        W = np.random.rand(N, K, T)
+    else:
+        WFixed = True
     H = np.random.rand(K, M)
     errs = [getKLError(V, multiplyConv1D(W, H))]
     if plotfn:
@@ -206,22 +210,23 @@ def doNMF1DConv(V, K, T, L, plotfn = None):
             fac = (thisW.T).dot(shiftMatLRUD(VLam, dj=-t))/denom
             HNew += H*fac
         H = HNew/T
-        WH = multiplyConv1D(W, H)
-        WH[WH == 0] = 1
-        VLam = V/WH
-        for t in range(T):
-            HShift = shiftMatLRUD(H, dj=t)
-            denom = np.sum(H, 1)[None, :]
-            denom[denom == 0] = 1
-            W[:, :, t] *= (VLam.dot(HShift.T))/denom
+        if not WFixed:
+            WH = multiplyConv1D(W, H)
+            WH[WH == 0] = 1
+            VLam = V/WH
+            for t in range(T):
+                HShift = shiftMatLRUD(H, dj=t)
+                denom = np.sum(H, 1)[None, :]
+                denom[denom == 0] = 1
+                W[:, :, t] *= (VLam.dot(HShift.T))/denom
         errs.append(getKLError(V, multiplyConv1D(W, H)))
-        if plotfn and (l+1)%10 == 0:
+        if plotfn and (l+1) == L:
             plt.clf()
             plotfn(V, W, H, l+1, errs)
             plt.savefig("NMF1DConv_%i.png"%(l+1), bbox_inches = 'tight')
     return (W, H)
 
-def doNMF2DConv(V, K, T, F, L, plotfn = None):
+def doNMF2DConv(V, K, T, F, L, W = np.array([]), plotfn = None):
     """
     Implementing the Euclidean 2D NMF technique described in 
     "Nonnegative Matrix Factor 2-D Deconvolution
@@ -240,7 +245,11 @@ def doNMF2DConv(V, K, T, F, L, plotfn = None):
     """
     N = V.shape[0]
     M = V.shape[1]
-    W = np.random.rand(N, K, T)
+    WFixed = False
+    if W.size == 0:
+        W = np.random.rand(N, K, T)
+    else:
+        WFixed = True
     H = np.random.rand(K, M, F)
     errs = [getEuclideanError(V, multiplyConv2D(W, H))]
     if plotfn:
@@ -251,19 +260,20 @@ def doNMF2DConv(V, K, T, F, L, plotfn = None):
     for l in range(L):
         print("NMF iteration %i of %i"%(l+1, L))
         #Step 1: Update Ws
-        VLam = multiplyConv2D(W, H)
-        #VLam[VLam == 0] = 1
-        WNums = np.zeros(W.shape)
-        WDenoms = np.zeros(W.shape)
-        for f in range(F):
-            thisV = shiftMatLRUD(V, di=-f)
-            thisVLam = shiftMatLRUD(VLam, di=-f)
-            for t in range(T):
-                thisH = shiftMatLRUD(H[:, :, f], dj=t)
-                WNums[:, :, t] += thisV.dot(thisH.T)
-                WDenoms[:, :, t] += thisVLam.dot(thisH.T)
-        #WDenoms[WDenoms == 0] = 1
-        W = W*(WNums/WDenoms)
+        if not WFixed:
+            VLam = multiplyConv2D(W, H)
+            #VLam[VLam == 0] = 1
+            WNums = np.zeros(W.shape)
+            WDenoms = np.zeros(W.shape)
+            for f in range(F):
+                thisV = shiftMatLRUD(V, di=-f)
+                thisVLam = shiftMatLRUD(VLam, di=-f)
+                for t in range(T):
+                    thisH = shiftMatLRUD(H[:, :, f], dj=t)
+                    WNums[:, :, t] += thisV.dot(thisH.T)
+                    WDenoms[:, :, t] += thisVLam.dot(thisH.T)
+            #WDenoms[WDenoms == 0] = 1
+            W = W*(WNums/WDenoms)
 
         #Step 2: Update Hs
         VLam = multiplyConv2D(W, H)
@@ -280,7 +290,7 @@ def doNMF2DConv(V, K, T, F, L, plotfn = None):
         #HDenoms[HDenoms == 0] = 1
         H = H*(HNums/HDenoms)
         errs.append(getEuclideanError(V, multiplyConv2D(W, H)))
-        if plotfn and (l+1)%10 == 0:
+        if plotfn and ((l+1) == L or (l+1)%40 == 0):
             plt.clf()
             plotfn(V, W, H, l+1, errs)
             plt.savefig("NMF2DConv_%i.png"%(l+1), bbox_inches = 'tight')
@@ -314,21 +324,28 @@ def plotNMF1DConvSpectra(V, W, H, iter, errs, hopLength = -1):
     plt.title("H")
     for k in range(K):
         plt.subplot(1, 4+K, 3+k)
-        plt.imshow(W[:, k, :], cmap = 'afmhot', \
-                interpolation = 'nearest', aspect = 'auto')  
-        plt.colorbar()
+        if hopLength > -1:
+            librosa.display.specshow(librosa.amplitude_to_db(W[:, k, :]), \
+                hop_length=hopLength, y_axis='log', x_axis='time')
+        else:
+            plt.imshow(W[:, k, :], cmap = 'afmhot', \
+                    interpolation = 'nearest', aspect = 'auto')  
+            plt.colorbar()
         plt.title("W%i"%k)
     plt.subplot(1, 4+K, 2)
     WH = multiplyConv1D(W, H)
     if hopLength > -1:
-        librosa.display.specshow(WH, hop_length = hopLength, y_axis = 'log', x_axis = 'time')
+        librosa.display.specshow(librosa.amplitude_to_db(WH), hop_length = hopLength,\
+                                 y_axis = 'log', x_axis = 'time')
     else:
         plt.imshow(WH, cmap = 'afmhot', interpolation = 'nearest', aspect = 'auto')
         plt.colorbar()
     plt.subplot(1, 4+K, 4+K)
-    plt.semilogy(np.array(errs))
+    errs = np.array(errs)
+    if len(errs) > 1:
+        errs = errs[1::]
+    plt.semilogy(errs)
     plt.title("Errors")
-    plt.title("W*H Iteration %i"%iter) 
 
 def plotNMF2DConvSpectra(V, W, H, iter, errs, hopLength = -1):
     """
@@ -360,10 +377,19 @@ def plotNMF2DConvSpectra(V, W, H, iter, errs, hopLength = -1):
     else:
         plt.imshow(WH, cmap = 'afmhot', interpolation = 'nearest', aspect = 'auto')
         plt.colorbar()
-    plt.title("W*H Iteration %i"%iter) 
+    plt.title("W*H Iteration %i"%iter)
+
+    plt.subplot(2, 2+K, 2+K+2)
+    if hopLength > -1:
+        librosa.display.specshow(librosa.amplitude_to_db(V-WH), hop_length = hopLength, \
+            y_axis = 'log', x_axis = 'time')
+    else:
+        plt.imshow(V-WH, cmap = 'afmhot', interpolation = 'nearest', aspect = 'auto')
+        plt.colorbar()
+    plt.title("Residual")
 
     for k in range(K):
-        plt.subplot(2, 2+K, 2+k)
+        plt.subplot(2, 2+K, 2+k+1)
         if hopLength > -1:
             librosa.display.specshow(librosa.amplitude_to_db(W[:, k, :]), \
                 hop_length=hopLength, y_axis='log', x_axis='time')
@@ -373,13 +399,13 @@ def plotNMF2DConvSpectra(V, W, H, iter, errs, hopLength = -1):
             plt.colorbar()
         plt.title("W%i"%k)
 
-        plt.subplot(2, 2+K, (2+K)+2+k)
+        plt.subplot(2, 2+K, (2+K)+2+k+1)
         plt.imshow(H[k, :, :].T, cmap = 'afmhot', \
-                interpolation = 'nearest', aspect = 'auto')
+            interpolation = 'nearest', aspect = 'auto')
         plt.colorbar()
         plt.title("H%i"%k)
 
-    plt.subplot(2, 2+K, 2+K)
+    plt.subplot(2, 2+K, 2)
     errs = np.array(errs)
     if len(errs) > 1:
         errs = errs[1::]
