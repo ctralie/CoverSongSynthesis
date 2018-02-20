@@ -191,7 +191,7 @@ def getJointEuclideanError(A, Ap, B, W1, W2, H1, H2):
     res += getEuclideanError(B, multiplyConv2D(W1, H2))
     return res
 
-def doNMF2DConvJoint(A, Ap, B, K, T, F, L, W = np.array([]), plotfn = None):
+def doNMF2DConvJoint(A, Ap, B, K, T, F, L, plotfn = None):
     """
     Implementing the Euclidean 2D NMF technique described in 
     "Nonnegative Matrix Factor 2-D Deconvolution
@@ -224,7 +224,7 @@ def doNMF2DConvJoint(A, Ap, B, K, T, F, L, W = np.array([]), plotfn = None):
     errs = [getJointEuclideanError(A, Ap, B, W1, W2, H1, H2)]
     if plotfn:
         res=4
-        plt.figure(figsize=((2+K)*res, 2*res))
+        plt.figure(figsize=((8+2*K)*res*1.2, 2*res))
         plotfn(A, Ap, B, W1, W2, H1, H2, 0, errs)
         plt.savefig("NMF2DConvJoint_%i.png"%0, bbox_inches = 'tight')
     for l in range(L):
@@ -237,6 +237,7 @@ def doNMF2DConvJoint(A, Ap, B, K, T, F, L, W = np.array([]), plotfn = None):
         W1Denoms = np.zeros(W1.shape)
         W2Nums = np.zeros(W2.shape)
         W2Denoms = np.zeros(W2.shape)
+        ticouter = time.time()
         for f in range(F):
             tic = time.time()
             thisA = shiftMatLRUD(A, di=-f)
@@ -252,10 +253,10 @@ def doNMF2DConvJoint(A, Ap, B, K, T, F, L, W = np.array([]), plotfn = None):
                 W1Denoms[:, :, t] += thisLam11.dot(thisH1T) + thisLam12.dot(thisH2T)
                 W2Nums[:, :, t] += thisAp.dot(thisH1T)
                 W2Denoms[:, :, t] += thisLam21.dot(thisH1T)
-            toc = time.time()
-            print("Elapsed Time Ws Iter: %.3g"%(toc-tic))
+            print("Elapsed Time Ws Phi=%i: %.3g"%(f, time.time()-tic))
         W1 = W1*(W1Nums/W1Denoms)
         W2 = W2*(W2Nums/W2Denoms)
+        print("Elapsed Time All Ws: %.3g"%(time.time()-ticouter))
 
         #Step 2: Update Hs
         Lam11 = multiplyConv2D(W1, H1)
@@ -265,7 +266,9 @@ def doNMF2DConvJoint(A, Ap, B, K, T, F, L, W = np.array([]), plotfn = None):
         H1Denoms = np.zeros(H1.shape)
         H2Nums = np.zeros(H2.shape)
         H2Denoms = np.zeros(H2.shape)
+        ticouter=time.time()
         for t in range(T):
+            tic = time.time()
             thisA = shiftMatLRUD(A, dj=-t)
             thisAp = shiftMatLRUD(Ap, dj=-t)
             thisB = shiftMatLRUD(B, dj=-t)
@@ -279,29 +282,33 @@ def doNMF2DConvJoint(A, Ap, B, K, T, F, L, W = np.array([]), plotfn = None):
                 H1Denoms[:, :, f] += thisW1T.dot(thisLam11) + thisW2T.dot(thisLam21)
                 H2Nums[:, :, f] += thisW1T.dot(thisB)
                 H2Denoms[:, :, f] += thisW1T.dot(thisLam12)
+            print("Elapsed time H t=%i, %.3g"%(t, time.time() - tic))
         H1 = H1*(H1Nums/H1Denoms)
         H2 = H2*(H2Nums/H2Denoms)
+        print("Elapsed Time All Hs: %.3g"%(time.time()-ticouter))
         errs.append(getJointEuclideanError(A, Ap, B, W1, W2, H1, H2))
         if plotfn and ((l+1) == L or (l+1)%40 == 0):
             plt.clf()
             plotfn(A, Ap, B, W1, W2, H1, H2, l+1, errs)
             plt.savefig("NMF2DConvJoint_%i.png"%(l+1), bbox_inches = 'tight')
-    return (W1, H1, W2, H2)
+    return (W1, W2, H1, H2)
 
 
-def plotNMF2DConvJointSpectra(A, Ap, B, W1, W2, H1, H2, iter, errs, hopLength = -1):
+def plotNMF2DConvJointSpectra(A, Ap, B, W1, W2, H1, H2, iter, errs, \
+        hopLength = -1, audioParams = None):
     """
     Plot NMF iterations on a log scale, showing V, H, and W*H
     :param A: An M x N1 matrix for song A
     :param Ap: An M x N1 matrix for song A'
     :param B: An M x N2 matrix for song B
-    :param W1: An N x K x T source/corpus matrix for songs A and B
-    :param W2: An N x K x T source/corpus matrix for song A'
+    :param W1: An M x K x T source/corpus matrix for songs A and B
+    :param W2: An M x K x T source/corpus matrix for song A'
     :param H1: A K x N1 x F matrix of activations for A and A'
     :param H2: A K x N2 x F matrix of activations for B
     :param iter: The iteration number
     :param errs: Errors over time
     :param hopLength: The hop length (for plotting)
+    :param audioParams: Parameters for inverting CQT
     """
     import librosa
     import librosa.display
@@ -310,16 +317,19 @@ def plotNMF2DConvJointSpectra(A, Ap, B, W1, W2, H1, H2, iter, errs, hopLength = 
     Lam11 = multiplyConv2D(W1, H1)
     Lam12 = multiplyConv2D(W1, H2)
     Lam21 = multiplyConv2D(W2, H1)
-    for k, (V, Lam, s) in enumerate(zip([A, Ap, B], [Lam11, Lam21, Lam12], \
-            ["$\Lambda_{W1, H1}$", "$\Lambda_{W2, H1}$", "$\Lambda_{W1, H2}$"])):
-        plt.subplot(2, 8+2*K, k+1)
-        if hopLength > -1:
-            librosa.display.specshow(librosa.amplitude_to_db(V), hop_length = hopLength, \
-                                        y_axis = 'log', x_axis = 'time')
-        else:
-            plt.imshow(A, cmap = 'afmhot', interpolation = 'nearest', aspect = 'auto')
-            plt.colorbar()
-        plt.title("A")
+    Lam22 = multiplyConv2D(W2, H2)
+    for k, (V, Lam, s1, s2) in enumerate(zip([A, Ap, B, None], [Lam11, Lam21, Lam12, Lam22], \
+            ["A", "Ap", "B", "Bp"],\
+            ["$\Lambda_{W1, H1}$", "$\Lambda_{W2, H1}$", "$\Lambda_{W1, H2}$", "$\Lambda_{W2, H2}$"])):
+        if k < 3:
+            plt.subplot(2, 8+2*K, k+1)
+            if hopLength > -1:
+                librosa.display.specshow(librosa.amplitude_to_db(V), hop_length = hopLength, \
+                                            y_axis = 'log', x_axis = 'time')
+            else:
+                plt.imshow(V, cmap = 'afmhot', interpolation = 'nearest', aspect = 'auto')
+                plt.colorbar()
+            plt.title(s1)
 
         plt.subplot(2, 8+2*K, 8+2*K+k+1)
         if hopLength > -1:
@@ -328,7 +338,15 @@ def plotNMF2DConvJointSpectra(A, Ap, B, W1, W2, H1, H2, iter, errs, hopLength = 
         else:
             plt.imshow(Lam, cmap = 'afmhot', interpolation = 'nearest', aspect = 'auto')
             plt.colorbar()
-        plt.title("%s Iteration %i"%(s, iter))
+        plt.title("%s Iteration %i"%(s2, iter))
+
+        if audioParams:
+            from SpectrogramTools import griffinLimCQTInverse
+            from scipy.io import wavfile
+            [Fs, bins_per_octave] = [audioParams['Fs'], audioParams['bins_per_octave']]
+            y_hat = griffinLimCQTInverse(Lam, Fs, hopLength, bins_per_octave, NIters=10)
+            y_hat = y_hat/np.max(np.abs(y_hat))
+            sio.wavfile.write("%s_Iter%i.wav"%(s1, iter), Fs, y_hat)
 
     plt.subplot(2, 8+2*K, 4)
     errs = np.array(errs)
@@ -348,7 +366,7 @@ def plotNMF2DConvJointSpectra(A, Ap, B, W1, W2, H1, H2, iter, errs, hopLength = 
             plt.colorbar()
         plt.title("W1%i"%k)
 
-        plt.subplot(2, 8+2*K, K+4+k+1)
+        plt.subplot(2, 8+2*K, 8+2*K+4+k+1)
         if hopLength > -1:
             librosa.display.specshow(librosa.amplitude_to_db(W2[:, k, :]), \
                 hop_length=hopLength, y_axis='log', x_axis='time')
@@ -358,7 +376,7 @@ def plotNMF2DConvJointSpectra(A, Ap, B, W1, W2, H1, H2, iter, errs, hopLength = 
             plt.colorbar()
         plt.title("W2%i"%k)
 
-        plt.subplot(2, 8+2*K, 8+2*K+4+k+1)
+        plt.subplot(2, 8+2*K, K+4+k+1)
         plt.imshow(H1[k, :, :].T, cmap = 'afmhot', \
             interpolation = 'nearest', aspect = 'auto')
         plt.colorbar()

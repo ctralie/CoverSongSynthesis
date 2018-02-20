@@ -59,6 +59,75 @@ def testNMF2DConvSynthetic():
     doNMF2DConv(V, K, T, F, L, plotfn=plotNMF2DConvSpectra)
     doNMF1DConv(V, K, T, L, plotfn=plotNMF1DConvSpectra)
 
+"""
+    :param A: An M x N1 matrix for song A
+    :param Ap: An M x N1 matrix for song A'
+    :param B: An M x N2 matrix for song B
+    :param W1: An M x K x T source/corpus matrix for songs A and B
+    :param W2: An M x K x T source/corpus matrix for song A'
+    :param H1: A K x N1 x F matrix of activations for A and A'
+    :param H2: A K x N2 x F matrix of activations for B
+"""
+
+def testNMF2DConvJointSynthetic():
+    np.random.seed(300)
+    T = 10
+    F = 10
+    K = 3
+    M = 20
+    N1 = 60
+    N2 = 40
+    W1 = np.zeros((M, K, T))
+    W2 = np.zeros((M, K, T))
+    #Pattern 1: A tall block in A that goes to a fat block in A'
+    [J, I] = np.meshgrid(np.arange(2), 4+np.arange(5))
+    W1[I.flatten(), 0, J.flatten()] = 1
+    [J, I] = np.meshgrid(np.arange(5), 7+np.arange(2))
+    W2[I.flatten(), 0, J.flatten()] = 1
+    #Pattern 2: An antidiagonal line in A that goes to a diagonal line in A'
+    W1[9-np.arange(7), 1, np.arange(7)] = 1
+    W2[np.arange(7), 1, np.arange(7)] = 1
+    #Pattern 3: A square in A that goes into a circle in A'
+    [J, I] = np.meshgrid(np.arange(5), 10+np.arange(5))
+    I = I.flatten()
+    J = J.flatten()
+    W1[np.arange(10), 2, 0] = 1
+    W1[np.arange(10), 2, 9] = 1
+    W1[0, 2, np.arange(10)] = 1
+    W1[10, 2, np.arange(10)] = 1
+    [J, I] = np.meshgrid(np.arange(T), np.arange(T))
+    I = I.flatten()
+    J = J.flatten()
+    idx = np.arange(I.size)
+    idx = idx[np.abs((I-5)**2 + (J-5)**2 - 4**2) < 4]
+    I = I[idx]
+    J = J[idx]
+    W2[I, 2, J] = 1
+
+    H1 = np.zeros((K, N1, F))
+    H1[0, [3, 15, 50], 9] = 1
+    H1[0, 27, 0] = 1
+    
+    #3 diagonal lines in a row, then a gap, then 3 in a row pitch shifted
+    H1[1, [5, 15, 25], 0] = 1
+    H1[1, [35, 45, 55], 5] = 1
+
+    #Squares and circles moving down then up
+    H1[2, [0, 48], 1] = 1
+    H1[2, [12, 36], 4] = 1
+    H1[2, 24, 8] = 1
+
+
+    H2 = np.random.rand(K, N2, F)
+    H2[H2 > 0.98] = 1
+    H2[H2 < 1] = 0
+
+    A = multiplyConv2D(W1, H1)
+    Ap = multiplyConv2D(W2, H1)
+    B = multiplyConv2D(W1, H2)
+
+    doNMF2DConvJoint(A, Ap, B, K, T, F, 200, plotfn = plotNMF2DConvJointSpectra)
+
 def outputNMFSounds(U1, U2, winSize, hopSize, Fs, fileprefix):
     for k in range(U1.shape[1]):
         S1 = np.repeat(U1[:, k][:, None], 60, axis = 1)
@@ -285,6 +354,64 @@ def testNMF1DTranslate():
     y_hat = y_hat/np.max(np.abs(y_hat))
     sio.wavfile.write("ReconstructedBadAAF.wav", Fs, y_hat)
 
+def testNMF2DJointMusic():
+    import librosa2
+    from scipy.io import wavfile
+
+    Fs, X = sio.wavfile.read("music/SmoothCriminalAligned.wav")
+    A = X[:, 0]/(2.0**15)
+    Ap = X[:, 1]/(2.0**15)
+    #Only take 15 seconds for initial experiments
+    A = A[5:Fs*20]
+    Ap = Ap[5:Fs*20]
+
+    B, Fs = librosa2.load("music/MJBad.mp3")
+    B = B[Fs*3:Fs*18]
+
+    hopSize = 64
+    bins_per_octave = 24
+    noctaves = 7
+    K = 20
+    T = 40
+    F = 18
+    NIters = 440
+
+    res = {}
+    for (V, s) in zip([A, Ap, B], ["A", "Ap", "B"]):
+        C = librosa2.cqt(y=V, sr=Fs, hop_length=hopSize, n_bins=noctaves*bins_per_octave,\
+                bins_per_octave=bins_per_octave)
+        C = np.abs(C)
+        res[s] = C
+        """
+        y_hat = griffinLimCQTInverse(C, Fs, hopSize, bins_per_octave, NIters=10)
+        y_hat = y_hat/np.max(np.abs(y_hat))
+        sio.wavfile.write("%sGTInverted.wav"%s, Fs, y_hat)
+        """
+    [CA, CAp, CB] = [res['A'], res['Ap'], res['B']]
+
+    plotfn = lambda A, Ap, B, W1, W2, H1, H2, iter, errs: \
+            plotNMF2DConvJointSpectra(A, Ap, B, W1, W2, H1, H2, iter, errs,\
+            hopLength = hopSize, audioParams={'Fs':Fs, 'bins_per_octave':bins_per_octave})
+    (W1, W2, H1, H2) = doNMF2DConvJoint(CA, CAp, CB, K, T, F, L=NIters, plotfn=plotfn)
+    sio.savemat("SmoothCriminalNMF2DJoint.mat", {"W1":W1, "W2":W2, "H1":H1, "H2":H2})
+    
+    LamA = multiplyConv2D(W1, H1)
+    LamAp = multiplyConv2D(W2, H1)
+    LamB = multiplyConv2D(W1, H2)
+    LamBp = multiplyConv2D(W2, H2)
+    for (C, s) in zip([LamA, LamAp, LamB, LamBp], ["A", "Ap", "B", "Bp"]):
+        y_hat = griffinLimCQTInverse(C, Fs, hopSize, bins_per_octave, NIters=10)
+        y_hat = y_hat/np.max(np.abs(y_hat))
+        sio.wavfile.write("%s.wav"%s, Fs, y_hat)
+
+    #Also invert each Wt
+    for k in range(W1.shape[1]):
+        y_hat = griffinLimCQTInverse(W1[:, k, :], Fs, hopSize, bins_per_octave, NIters=10)
+        y_hat = y_hat/np.max(np.abs(y_hat))
+        sio.wavfile.write("W1_%i.wav"%k, Fs, y_hat)
+        y_hat = griffinLimCQTInverse(W2[:, k, :], Fs, hopSize, bins_per_octave, NIters=10)
+        y_hat = y_hat/np.max(np.abs(y_hat))
+        sio.wavfile.write("W2_%i.wav"%k, Fs, y_hat)
 
 if __name__ == '__main__':
     #testNMFMusaicingSimple()
@@ -292,6 +419,8 @@ if __name__ == '__main__':
     #testNMFJointSmoothCriminal()
     #testNMF1DConvSynthetic()
     #testNMF2DConvSynthetic()
+    #testNMF2DConvJointSynthetic()
     #testNMF1DMusic()
-    testNMF2DMusic()
+    #testNMF2DMusic()
     #testNMF1DTranslate()
+    testNMF2DJointMusic()
