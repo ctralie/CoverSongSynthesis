@@ -1,6 +1,7 @@
 import numpy as np
 import scipy.io as sio
 import matplotlib.pyplot as plt
+import time
 
 def getKLError(V, WH, eps = 1e-10):
     """
@@ -266,12 +267,15 @@ def doNMF2DConv(V, K, T, F, L, W = np.array([]), plotfn = None):
             WNums = np.zeros(W.shape)
             WDenoms = np.zeros(W.shape)
             for f in range(F):
+                tic = time.time()
                 thisV = shiftMatLRUD(V, di=-f)
                 thisVLam = shiftMatLRUD(VLam, di=-f)
                 for t in range(T):
                     thisH = shiftMatLRUD(H[:, :, f], dj=t)
                     WNums[:, :, t] += thisV.dot(thisH.T)
                     WDenoms[:, :, t] += thisVLam.dot(thisH.T)
+                toc = time.time()
+                print("Elapsed Time Wf Iter: %.3g"%(toc-tic))
             #WDenoms[WDenoms == 0] = 1
             W = W*(WNums/WDenoms)
 

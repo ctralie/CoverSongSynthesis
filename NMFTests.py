@@ -139,12 +139,23 @@ def testNMFMusaicingSimple():
 def testNMF2DMusic():
     import librosa2
     from scipy.io import wavfile
-    X, Fs = librosa2.load("music/SmoothCriminalMJ.mp3")
-    X = X[Fs*15:Fs*30]
+    X1, Fs = librosa2.load("music/SmoothCriminalMJ.mp3", sr=22050)
+    X1 = X1[Fs*15:Fs*30]
+
+    X2, Fs = librosa2.load("music/MJBad.mp3")
+    X2 = X2[Fs*3:Fs*18]
+
+    X = np.zeros(len(X1)+len(X2)+Fs)
+    X[0:len(X1)] = X1
+    X[-len(X2)::] = X2
+
     hopSize = 64
-    bins_per_octave = 36
+    bins_per_octave = 24
     noctaves = 7
-    K = 10
+    K = 20
+    T = 40
+    F = 18
+    NIters = 440
 
     """
     D = librosa2.stft(X)
@@ -161,7 +172,7 @@ def testNMF2DMusic():
     sio.wavfile.write("smoothcriminalGTInverted.wav", Fs, y_hat)
 
     plotfn = lambda V, W, H, iter, errs: plotNMF2DConvSpectra(V, W, H, iter, errs, hopLength = hopSize)
-    (W, H) = doNMF2DConv(C, K, T=40, F=18, L=240, plotfn=plotfn)
+    (W, H) = doNMF2DConv(C, K, T=T, F=18, L=NIters, plotfn=plotfn)
     sio.savemat("SmoothCriminalNMF2D.mat", {"W":W, "H":H})
     C = multiplyConv2D(W, H)
     print("C.shape = ", C.shape)
