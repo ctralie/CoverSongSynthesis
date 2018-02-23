@@ -48,28 +48,33 @@ def plotNMFSpectra(V, W, H, iter, errs, hopLength = -1):
     plt.title("W*H Iteration %i"%iter)  
     plt.subplot(153)
     if hopLength > -1:
-        plt.imshow(librosa.amplitude_to_db(W), cmap = 'afmhot', \
-                interpolation = 'nearest', aspect = 'auto')        
+        librosa.display.specshow(librosa.amplitude_to_db(W), hop_length = hopLength, \
+                                    y_axis = 'log', x_axis = 'time')        
     else:
         plt.imshow(W, cmap = 'afmhot', interpolation = 'none', aspect = 'auto')
     plt.title("W")
     plt.subplot(154)
-    if hopLength > -1:
-        plt.imshow(librosa.amplitude_to_db(H), cmap = 'afmhot', \
-                interpolation = 'nearest', aspect = 'auto')        
-    else:
-        plt.imshow(H, cmap = 'afmhot', interpolation = 'none', aspect = 'auto')
+    plt.imshow(np.log(H + np.min(H[H > 0])), cmap = 'afmhot', interpolation = 'none', aspect = 'auto')
     plt.title("H Iteration %i"%iter)
     plt.subplot(155)
     plt.semilogy(np.array(errs[1::]))
     plt.title("KL Errors")
     plt.xlabel("Iteration")             
 
-def doNMF(V, K, L, plotfn = None):
+def doNMF(V, K, L, W = np.array([]), plotfn = None):
     N = V.shape[0]
     M = V.shape[1]
-    W = np.random.rand(N, K)
+    WFixed = False
+    if W.size > 0:
+        WFixed = True
+        K = W.shape[1]
+        print("W.shape = ", W.shape)
+    else:
+        W = np.random.rand(N, K)
+    tic = time.time()
     H = np.random.rand(K, M)
+    print("Time elapsed H initializing: %.3g"%(time.time() - tic))
+
     errs = [getKLError(V, W.dot(H))]
     if plotfn:
         res=4
@@ -79,52 +84,82 @@ def doNMF(V, K, L, plotfn = None):
     for l in range(L):
         print("NMF iteration %i of %i"%(l+1, L))            
         #KL Divergence Version
+        tic = time.time()
         VLam = V/(W.dot(H))
+        print("VLam Elapsed Time: %.3g"%(time.time() - tic))
+        tic = time.time()
         H *= (W.T).dot(VLam)/np.sum(W, 0)[:, None]
-        VLam = V/(W.dot(H))
-        W *= (VLam.dot(H.T))/np.sum(H, 1)[None, :]
+        print("Elapsed Time H Update %.3g"%(time.time() - tic))
+        if not WFixed:
+            VLam = V/(W.dot(H))
+            W *= (VLam.dot(H.T))/np.sum(H, 1)[None, :]
         errs.append(getKLError(V, W.dot(H)))
-        if plotfn and (l+1)%10 == 0:
+        if plotfn and ((l+1)==L):# or (l+1)%10 == 0):
             plt.clf()
             plotfn(V, W, H, l+1, errs)
             plt.savefig("NMF_%i.png"%(l+1), bbox_inches = 'tight')
     return (W, H)
 
-def doNMFWFixed(V, W, L, simple = True, plotfn = None):
+def doNMFDreidger(V, W, L, r = 7, p = 10, c = 3, plotfn = None):
     """
-    Implementing the technique described in "Let It Bee"
-    :param V: An N x M target
-    :param W: An N x K source/corpus matrix
+    Implement the technique from "Let It Bee-Towards NMF-Inspired
+    Audio Mosaicing"
+    :param V: M x N target matrix
+    :param W: An M x K matrix of template sounds in some time order\
+        along the second axis
     :param L: Number of iterations
-    :param simple: If true, do ordinary KL-Divergence based NMF\
-        Otherwise, do the variant described in [1]
-    :param hopLength: The hop length (for plotting)
-    :param plotfn: A function used to plot each iteration, which should\
-        take the arguments (V, W, H, iter)
-    :returns H: A KxM matrix of source activations for each column of V
+    :param r: Width of the repeated activation filter
+    :param p: Degree of polyphony; i.e. number of values in each column\
+        of H which should be un-shrunken
+    :param c: Half length of time-continuous activation filter
     """
+    import scipy.ndimage
     N = V.shape[0]
     M = V.shape[1]
     K = W.shape[1]
+    tic = time.time()
     H = np.random.rand(K, M)
-    WDenom = np.sum(W, 0)
+    print("Time elapsed H initializing: %.3g"%(time.time() - tic))
     errs = [getKLError(V, W.dot(H))]
     if plotfn:
-        res = 5
-        plt.figure(figsize=(res*4, res))
+        res=4
+        plt.figure(figsize=(res*5, res))
         plotfn(V, W, H, 0, errs) 
-        plt.savefig("NMFWFixed%i.png"%0, bbox_inches = 'tight')
+        plt.savefig("NMFDreidger_%i.png"%0, bbox_inches = 'tight')
+    
+    #Setup indicator matrices for diagonals
+    [J, I] = np.meshgrid(np.arange(M), np.arange(K))
+
     for l in range(L):
-        print("NMF iteration %i of %i"%(l+1, L))
-        if simple:
-            C = np.array(H)            
+        print("NMF Dreidger iteration %i of %i"%(l+1, L))   
+        iterfac = 1-float(l+1)/L       
+        #Step 1: Avoid repeated activations
+        MuH = scipy.ndimage.filters.maximum_filter(H, size=(1, r))
+        R = np.array(H)
+        R[R<MuH] = R[R<MuH]*iterfac
+        #Step 2: Restrict number of simultaneous activations
+        colCutoff = -np.sort(-R, 0)[p, :]
+        P = np.array(R)
+        P[P < colCutoff[None, :]] = P[P < colCutoff[None, :]]*iterfac
+        #Step 3: Supporting time-continuous activations
+        C = np.array(P)
+        if c > 0:
+            for k in range(-C.shape[0]+1, C.shape[1]):
+                z = np.cumsum(np.concatenate((np.zeros(c), np.diag(C, k), np.zeros(c))))
+                x2 = z[2*c::] - z[0:-2*c]
+                C[np.diag(I, k), np.diag(J, k)] = x2
         #KL Divergence Version
-        H = C*(W.T.dot(V/(W.dot(C)))/WDenom[:, None])
+        tic = time.time()
+        VLam = V/(W.dot(C))
+        print("VLam Elapsed Time: %.3g"%(time.time() - tic))
+        tic = time.time()
+        H = C*((W.T).dot(VLam)/np.sum(W, 0)[:, None])
+        print("Elapsed Time H Update %.3g"%(time.time() - tic))
         errs.append(getKLError(V, W.dot(H)))
-        if plotfn:
+        if plotfn and ((l+1)==L or (l+1)%10 == 0):
             plt.clf()
             plotfn(V, W, H, l+1, errs)
-            plt.savefig("NMFWFixed%i.png"%(l+1), bbox_inches = 'tight')
+            plt.savefig("NMDreidger_%i.png"%(l+1), bbox_inches = 'tight')
     return H
 
 def shiftMatLRUD(X, di=0, dj=0):
@@ -224,7 +259,7 @@ def doNMF1DConv(V, K, T, L, W = np.array([]), plotfn = None, plotComponents = Tr
                 denom[denom == 0] = 1
                 W[:, :, t] *= (VLam.dot(HShift.T))/denom
         errs.append(getKLError(V, multiplyConv1D(W, H)))
-        if plotfn and ((l+1) == L or (l+1)%20 == 0):
+        if plotfn and ((l+1) == L or (l+1)%40 == 0):
             plt.clf()
             plotfn(V, W, H, l+1, errs)
             plt.savefig("NMF1DConv_%i.png"%(l+1), bbox_inches = 'tight')
@@ -284,170 +319,6 @@ def getComplexNMF1DTemplates(S, W, H, p = 2, audioParams = None):
             plt.savefig("%s_%iPower.svg"%(fileprefix, k), bbox_inches = 'tight')
         wavfile.write("%sNMF.wav"%fileprefix, Fs, X)
     return (Ss, Ratios)
-
-def doKMeansComplexSpecs(W, NKMeans):
-    from sklearn.cluster import KMeans
-    M = W.shape[0]
-    T = W.shape[2]
-    #Reshape to an (NxMxT) array
-    X = np.swapaxes(W, 0, 1)
-    X = np.reshape(X, [X.shape[0], X.shape[1]*X.shape[2]])
-    #Now extract the real and imaginary components
-    Y = np.zeros((X.shape[0], X.shape[1]*2))
-    Y[:, 0:X.shape[1]] = np.real(X)
-    Y[:, X.shape[1]::] = np.imag(X)
-    #Do PCA to reduce dimension before KMeans, since ambient
-    #dimension is usually much higher than number of points
-    tic = time.time()
-    YCov = Y.dot(Y.T)
-    [lam, U] = np.linalg.eigh(YCov)
-    pos_lam_inds = lam > 1e-10
-    lam = lam[pos_lam_inds]
-    U = U[:, pos_lam_inds]
-    VT = U.T.dot(Y)/np.sqrt(lam[:, None])
-    Yp = U*np.sqrt(lam[None, :])
-    print("Elapsed Time PCA: %.3g"%(time.time() - tic))
-    tic = time.time()
-    kmeans = KMeans(n_clusters = NKMeans, random_state=0, n_jobs=-1).fit(Yp)
-    Yp = kmeans.cluster_centers_
-    Y = Yp.dot(VT)
-    print("Elapsed Time KMeans: %.3g"%(time.time() - tic))
-    #Now put result back to imaginary
-    X = Y[:, 0:X.shape[1]] + np.complex(0, 1)*Y[:, X.shape[1]::]
-    #Reshape back to proper dimensions
-    X = np.reshape(X, [X.shape[0], M, T])
-    X = np.swapaxes(X, 0, 1)
-    return X
-
-
-def doDLComplexSpecs(W, NComponents):
-    import spams
-    M = W.shape[0]
-    N = W.shape[1]
-    T = W.shape[2]
-    #Reshape to an (NxMxT) array
-    X = np.swapaxes(W, 0, 1)
-    X = np.reshape(X, [X.shape[0], X.shape[1]*X.shape[2]])
-    #Now extract the real and imaginary components
-    Y = np.zeros((X.shape[0], X.shape[1]*2))
-    Y[:, 0:X.shape[1]] = np.real(X)
-    Y[:, X.shape[1]::] = np.imag(X)
-    
-    Y = np.asfortranarray(Y.T)
-    param = {'K':NComponents, 'lambda1':0.15, 'numThreads':8, 'iter':100}
-    Y = spams.trainDL(Y, **param).T
-    
-    #Now put result back to imaginary
-    X = Y[:, 0:X.shape[1]] + np.complex(0, 1)*Y[:, X.shape[1]::]
-    #Reshape back to proper dimensions
-    X = np.reshape(X, [X.shape[0], M, T])
-    X = np.swapaxes(X, 0, 1)
-    return X
-
-def doPCAComplexSpecs(W, NComponents):
-    from sklearn.decomposition import PCA
-
-
-def getComplexNMF1DDictionary(Ss1, W1, Ratios1, Ss2, W2, H, winSize, hopSize, Fs, \
-        ratio = 0.1, shifts = np.arange(-6, 7), NKMeans = 10, fileprefix = ""):
-    """
-    For each component, pull out all T-length blocks from S1 and S2 whose ratio in song 1 is\
-    greater than "ratio,", then perform KMeans on their joint embedding with "NKMeans",\
-    components, and add those to the dictionary for every pitch shift of every component
-    :param Ss1: An array of K MxN complex spectrogram components
-    :param W1: An MxKxT matrix of K sources over frequencytemporal spans MxT
-    :param Ratios1: An K-length array of ratios for every spectrogram frame for every component
-    :param Ss2: An array of K MxN complex spectrogram components in correspondence with S1
-    :param W2: An MxKxT matrix of K sources over frequencytemporal spans MxT, \
-        in correspondence with W1
-    :param H: A KxN matrix of source activations for each column of |S|
-    :param winSize: Window size of STFT
-    :param hopSize: Hop size of STFT
-    :param Fs: Sample rate of audio signal
-    :param ratio: Ratio above which to keep
-    :param shifts: Pitch shifts to do
-    :param NKMeans: Number of KMeans clusters to find for each component
-    :param fileprefix: If specified, save KMeans centers to file
-    """
-    from SpectrogramTools import STFT, iSTFT
-    import pyrubberband as pyrb
-    from scipy.io import wavfile
-    NF = Ss1[0].shape[0]
-    N = Ss1[0].shape[1]
-    M = W1.shape[0]
-    K = W1.shape[1]
-    T = W1.shape[2]
-    W1Ret = np.array([])
-    W2Ret = np.array([])
-    for k in range(K):
-        print("Making dictionary from component %i of %i..."%(k+1, K))
-        tic = time.time()
-        #Spectrograms in correspondence for this component
-        S1k = Ss1[k]
-        S2k = Ss2[k]
-        #Arrays holding all pitch shifted versions
-        Ss1k = [S1k]
-        Ss2k = [S2k]
-        #Zero shifted time domain
-        X1k = iSTFT(S1k, winSize, hopSize)
-        X2k = iSTFT(S2k, winSize, hopSize)
-        #Precompute pitch shifted versions of this component
-        shiftorder = [0]
-        for shift in shifts:
-            if shift == 0:
-                continue
-            shiftorder.append(shift)
-            Y1 = pyrb.pitch_shift(X1k, Fs, shift)
-            Y2 = pyrb.pitch_shift(X2k, Fs, shift)
-            Ss1k.append(STFT(Y1, winSize, hopSize))
-            Ss2k.append(STFT(Y2, winSize, hopSize))
-        #Compute time delay embedding of the joint embedding of each pitch
-        #shifted spectrogram for this component
-        ND = N-T+1
-        Wsk = []
-        for (S1ki, S2ki) in zip(Ss1k, Ss2k):
-            S = np.concatenate((S1ki, S2ki), 0)
-            Wski = np.zeros((M*2, ND, T), dtype=S.dtype)
-            for t in range(T):
-                Wski[:, :, t] = S[:, t:t+ND]
-            Wsk.append(Wski)
-        #Retain only the components whose mean ratio exceeds "ratio"
-        RatioWin = np.cumsum(np.concatenate(([0], Ratios1[k].flatten())))
-        RatioWin = (RatioWin[T::] - RatioWin[0:-T])/float(T)
-        idx = np.arange(ND)
-        idx = idx[RatioWin >= ratio]
-        print("Component %i retaining %.3g, %i total"%(k, float(len(idx))/ND, len(idx)))
-        for i, Wski in enumerate(Wsk):
-            #Now do KMeans on Wski
-            print("Doing kmeans shift %i..."%shiftorder[i])
-            Wski = Wski[:, idx, :]
-            #Normalize each block by power
-            #Wski /= np.sum(np.sum(Wski*np.conj(Wski), 0), 1)[None, :, None]
-            #Do KMeans
-            if Wski.shape[1] > NKMeans:
-                Wski = doKMeansComplexSpecs(Wski, NKMeans)
-            if len(fileprefix) > 0:
-                #Put all of the dictionary elements from song 1 next to each other,
-                #separated by blank spaces, followed by the dictionary elements
-                #from song 2
-                NElems = Wski.shape[1]
-                S = np.zeros((M, NElems*T*4), dtype=np.complex)
-                for j in range(NKMeans):
-                    S[:, j*2*T:j*2*T+T] = Wski[0:NF, j, :]
-                    S[:, NElems*T*2+j*2*T:NElems*T*2+j*2*T+T] = Wski[NF::, j, :]
-                X = iSTFT(S, winSize, hopSize)
-                X = X/np.max(np.abs(X))
-                wavfile.write("%s_X%i_shift%i.wav"%(fileprefix, k, shiftorder[i]), Fs, X)
-            Wski1 = Wski[0:NF, :, :]
-            Wski2 = Wski[NF::, :, :]
-            if W1Ret.size == 0:
-                W1Ret = Wski1
-                W2Ret = Wski2
-            else:
-                W1Ret = np.concatenate((W1Ret, Wski1), 1)
-                W2Ret = np.concatenate((W2Ret, Wski2), 1)
-        print("Elapsed Time: %.3g"%(time.time() - tic))
-    return (W1Ret, W2Ret)
 
 def doNMF2DConv(V, K, T, F, L, W = np.array([]), plotfn = None):
     """

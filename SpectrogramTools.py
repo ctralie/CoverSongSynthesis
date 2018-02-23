@@ -188,7 +188,7 @@ def griffinLimInverse(S, W, H, NIters = 10, winfunc = None):
         A = STFT(iSTFT(A, W, H, winfunc), W, H, winfunc)
         Norm = np.sqrt(A*np.conj(A))
         Norm[Norm < eps] = 1
-        A = S*(A/Norm)
+        A = np.abs(S)*(A/Norm)
     X = iSTFT(A, W, H, winfunc)
     return np.real(X)
 
