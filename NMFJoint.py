@@ -287,7 +287,7 @@ def doNMF2DConvJoint(A, Ap, B, K, T, F, L, plotfn = None):
         H2 = H2*(H2Nums/H2Denoms)
         print("Elapsed Time All Hs: %.3g"%(time.time()-ticouter))
         errs.append(getJointEuclideanError(A, Ap, B, W1, W2, H1, H2))
-        if plotfn and ((l+1) == L or (l+1)%40 == 0):
+        if plotfn and ((l+1) == L):# or (l+1)%40 == 0):
             plt.clf()
             plotfn(A, Ap, B, W1, W2, H1, H2, l+1, errs)
             plt.savefig("NMF2DConvJoint_%i.png"%(l+1), bbox_inches = 'tight')
@@ -313,6 +313,23 @@ def plotNMF2DConvJointSpectra(A, Ap, B, W1, W2, H1, H2, iter, errs, \
     import librosa
     import librosa.display
     K = W1.shape[1]
+
+    if audioParams:
+        from SpectrogramTools import griffinLimCQTInverse
+        from scipy.io import wavfile
+        import os
+        pre = "NMFJointIter%i"%iter
+        if not os.path.exists(pre):
+            os.mkdir(pre)
+        [Fs, bins_per_octave] = [audioParams['Fs'], audioParams['bins_per_octave']]
+        #Invert each Wt
+        for k in range(W1.shape[1]):
+            y_hat = griffinLimCQTInverse(W1[:, k, :], Fs, hopLength, bins_per_octave, NIters=10)
+            y_hat = y_hat/np.max(np.abs(y_hat))
+            sio.wavfile.write("%s/W1_%i.wav"%(pre, k), Fs, y_hat)
+            y_hat = griffinLimCQTInverse(W2[:, k, :], Fs, hopLength, bins_per_octave, NIters=10)
+            y_hat = y_hat/np.max(np.abs(y_hat))
+            sio.wavfile.write("%s/W2_%i.wav"%(pre, k), Fs, y_hat)
 
     Lam11 = multiplyConv2D(W1, H1)
     Lam12 = multiplyConv2D(W1, H2)
@@ -341,12 +358,9 @@ def plotNMF2DConvJointSpectra(A, Ap, B, W1, W2, H1, H2, iter, errs, \
         plt.title("%s Iteration %i"%(s2, iter))
 
         if audioParams:
-            from SpectrogramTools import griffinLimCQTInverse
-            from scipy.io import wavfile
-            [Fs, bins_per_octave] = [audioParams['Fs'], audioParams['bins_per_octave']]
             y_hat = griffinLimCQTInverse(Lam, Fs, hopLength, bins_per_octave, NIters=10)
             y_hat = y_hat/np.max(np.abs(y_hat))
-            sio.wavfile.write("%s_Iter%i.wav"%(s1, iter), Fs, y_hat)
+            sio.wavfile.write("%s/%s.wav"%(pre, s1), Fs, y_hat)
 
     plt.subplot(2, 8+2*K, 4)
     errs = np.array(errs)
