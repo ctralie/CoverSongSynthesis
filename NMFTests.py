@@ -181,7 +181,7 @@ def testNMFMusaicingSimple():
     """
     import librosa
     winSize = 2048
-    hopSize = 256
+    hopSize = 1024
     Fs = 22050
 
     X, Fs = librosa.load("music/Bees_Buzzing.mp3")
@@ -303,13 +303,14 @@ def testNMF1DMusic():
 def testNMF1DTranslate():
     import librosa
     from scipy.io import wavfile
-    hopSize = 512
-    winSize = 4096
+    hopSize = 256
+    hopSize2 = 1024 #Hop size to use with Dreidger technique (to save memory)
+    winSize = 2048
     K=5
     T=12
     plotfn = lambda V, W, H, iter, errs: plotNMF1DConvSpectra(V, W, H, iter, errs, hopLength = hopSize)
 
-    Fs, X = sio.wavfile.read("music/SmoothCriminalAligned44100.wav")
+    Fs, X = sio.wavfile.read("music/SmoothCriminalAligned.wav")
     print("Fs = ", Fs)
     X1 = X[:, 0]/(2.0**15)
     X2 = X[:, 1]/(2.0**15)
@@ -317,7 +318,7 @@ def testNMF1DTranslate():
     X1 = X1[0:Fs*30]
     X2 = X2[0:Fs*30]
 
-    #Do NMF on joint magintude embeddings of both songs
+    #Step 1: Do NMF on joint magintude embeddings of both songs
     S1 = STFT(X1, winSize, hopSize)
     S2 = STFT(X2, winSize, hopSize)
     N = S1.shape[0]
@@ -330,10 +331,11 @@ def testNMF1DTranslate():
     res = sio.loadmat("SmoothCriminalNMF.mat")
     [W, H, S1, S2] = [res['W'], res['H'], res['S1'], res['S2']]
     T = W.shape[2]
-    Fs = 44100
+    Fs = 22050
     N = int(winSize/2)+1
     """
 
+    #Step 2: Do NMFD and break the tracks down into corresponding components
     W1 = W[0:N, :]
     W2 = W[N::, :]
     audioParams={'Fs':Fs, 'winSize':winSize,'hopSize':hopSize, 'fileprefix':'MJ'}
@@ -341,16 +343,59 @@ def testNMF1DTranslate():
     audioParams['fileprefix'] = 'AAF'
     (Ss2, Ratios2) = getComplexNMF1DTemplates(S2, W2, H, p = 2, audioParams=audioParams)
 
+    #Step 3: Resample spectrograms with new hop size to save memory, and
+    #get the pitch shifts
+    W1Complex = np.array([])
+    for S in Ss1:
+        X = iSTFT(S, winSize, hopSize)
+        S = getPitchShiftedSpecs(X, Fs, winSize, hopSize2)
+        if W1Complex.size == 0:
+            W1Complex = S
+        else:
+            W1Complex = np.concatenate((W1Complex, S), 1)
+    W2Complex = np.array([])
+    for S in Ss2:
+        X = iSTFT(S, winSize, hopSize)
+        S = getPitchShiftedSpecs(X, Fs, winSize, hopSize2)
+        if W2Complex.size == 0:
+            W2Complex = S
+        else:
+            W2Complex = np.concatenate((W2Complex, S), 1)
 
-
-    plotfn = lambda V, W, H, iter, errs: plotNMF1DConvSpectra(V, W, H, iter, errs, \
-                                            hopLength = hopSize, plotComponents = False)
+    #Step 4: Load in song B and apply the Dreidger technique to "musaic"
+    #parts from the pitch shifted templates
+    Fs = 22050
+    plotfn = lambda V, W, H, iter, errs: plotNMFSpectra(V, W, H, iter, errs, hopSize2)
     X, Fs = librosa.load("music/MJBad.mp3", sr=Fs)
     X = X[Fs*3:Fs*20]
-    S = np.abs(STFT(X, winSize, hopSize))
-    """
-    TODO: Fill in Dreidger technique
-    """
+    S = np.abs(STFT(X, winSize, hopSize2))
+    
+    #First do ordinary NMF
+    (W, H) = doNMF(S, -1, 50, W=np.abs(W1Complex), plotfn=plotfn)
+    sio.savemat("HNMF.mat", {"H":H})
+    H = np.array(H, dtype=np.complex)
+    S1 = W1Complex.dot(H)
+    S2 = W2Complex.dot(H)
+    Y1 = griffinLimInverse(S1, winSize, hopSize2, NIters=30)
+    Y1 = Y1/np.max(np.abs(Y1))
+    Y2 = griffinLimInverse(S2, winSize, hopSize2, NIters=30)
+    Y2 = Y2/np.max(np.abs(Y2))
+    wavfile.write("BadMJMusaicNMF.wav", Fs, Y1)
+    wavfile.write("BadAAFMusaicNMF.wav", Fs, Y2)
+
+    H = doNMFDreidger(S, np.abs(W1Complex), L=50, r=7, p=10, c=0, plotfn=plotfn)
+    sio.savemat("H.mat", {"H":H})
+    H = np.array(H, dtype=np.complex)
+    S1 = W1Complex.dot(H)
+    S2 = W2Complex.dot(H)
+    Y1 = griffinLimInverse(S1, winSize, hopSize2, NIters=30)
+    Y1 = Y1/np.max(np.abs(Y1))
+    Y2 = griffinLimInverse(S2, winSize, hopSize2, NIters=30)
+    Y2 = Y2/np.max(np.abs(Y2))
+    wavfile.write("BadMJMusaic.wav", Fs, Y1)
+    wavfile.write("BadAAFMusaic.wav", Fs, Y2)
+
+
 
 def testNMF2DJointMusic():
     import librosa2
@@ -396,13 +441,13 @@ def testNMF2DJointMusic():
 
 
 if __name__ == '__main__':
-    testNMFMusaicingSimple()
+    #testNMFMusaicingSimple()
     #testNMFJointSynthetic()
     #testNMFJointSmoothCriminal()
     #testNMF1DConvSynthetic()
     #testNMF2DConvSynthetic()
     #testNMF1DMusic()
     #testNMF2DMusic()
-    #testNMF1DTranslate()
+    testNMF1DTranslate()
     #testNMF2DConvJointSynthetic()
     #testNMF2DJointMusic()
