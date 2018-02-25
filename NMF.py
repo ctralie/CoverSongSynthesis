@@ -156,7 +156,7 @@ def doNMFDreidger(V, W, L, r = 7, p = 10, c = 3, plotfn = None):
         H = C*((W.T).dot(VLam)/np.sum(W, 0)[:, None])
         print("Elapsed Time H Update %.3g"%(time.time() - tic))
         errs.append(getKLError(V, W.dot(H)))
-        if plotfn and ((l+1)==L or (l+1)%10 == 0):
+        if plotfn and ((l+1)==L or (l+1)%20 == 0):
             plt.clf()
             plotfn(V, W, H, l+1, errs)
             plt.savefig("NMDreidger_%i.png"%(l+1), bbox_inches = 'tight')
@@ -203,7 +203,8 @@ def multiplyConv2D(W, H):
             Lam += Wt.dot(Hf)
     return Lam
 
-def doNMF1DConv(V, K, T, L, W = np.array([]), plotfn = None, plotComponents = True):
+def doNMF1DConv(V, K, T, L, W = np.array([]), plotfn = None, plotComponents = True, \
+        joint = False, prefix=""):
     """
     Implementing the technique described in 
     "Non-negative Matrix Factor Deconvolution; Extraction of
@@ -215,6 +216,9 @@ def doNMF1DConv(V, K, T, L, W = np.array([]), plotfn = None, plotComponents = Tr
     :param L: Number of iterations
     :param plotfn: A function used to plot each iteration, which should\
         take the arguments (V, W, H, iter)
+    :param joint: If true, it's understood that V and W are two songs concatenated\
+        on top of each other.  Functionality is the same, but errors are computed\
+        separately, and plotting is done differently
     :returns (W, H): \
         W is an NxKxT matrix of K sources over spatiotemporal spans NxT
         H is a KxM matrix of source activations for each column of V
@@ -226,16 +230,27 @@ def doNMF1DConv(V, K, T, L, W = np.array([]), plotfn = None, plotComponents = Tr
         W = np.random.rand(N, K, T)
     else:
         WFixed = True
+        K = W.shape[1]
     H = np.random.rand(K, M)
-    errs = [getKLError(V, multiplyConv1D(W, H))]
+    WH = multiplyConv1D(W, H)
+    if joint:
+        N1 = int(N/2)
+        errs = [[getKLError(V[0:N1, :], WH[0:N1, :]), \
+                getKLError(V[N1::, :], WH[N1::, :])]]
+    else:
+        errs = [getKLError(V, WH)]
     if plotfn:
         res=4
         pK = K
         if not plotComponents:
             pK = 0
-        plt.figure(figsize=((4+pK)*res, res))
-        plotfn(V, W, H, 0, errs) 
-        plt.savefig("NMF1DConv_%i.png"%0, bbox_inches = 'tight')
+        if joint:
+            plt.figure(figsize=((4+pK)*res, 3*res))
+        else:
+            plt.figure(figsize=((4+pK)*res, res))
+        if not joint:
+            plotfn(V, W, H, 0, errs) 
+            plt.savefig("NMF1DConv_%i.png", bbox_inches = 'tight')
     for l in range(L):
         print("NMF iteration %i of %i"%(l+1, L))            
         #KL Divergence Version
@@ -258,11 +273,21 @@ def doNMF1DConv(V, K, T, L, W = np.array([]), plotfn = None, plotComponents = Tr
                 denom = np.sum(H, 1)[None, :]
                 denom[denom == 0] = 1
                 W[:, :, t] *= (VLam.dot(HShift.T))/denom
-        errs.append(getKLError(V, multiplyConv1D(W, H)))
-        if plotfn and ((l+1) == L or (l+1)%40 == 0):
+        WH = multiplyConv1D(W, H)
+        if joint:
+            N1 = int(N/2)
+            errs.append([getKLError(V[0:N1, :], WH[0:N1, :]), \
+                    getKLError(V[N1::, :], WH[N1::, :])])
+        else:
+            errs.append([getKLError(V, WH)])
+        if plotfn and ((l+1) == L):# or (l+1)%40 == 0):
             plt.clf()
             plotfn(V, W, H, l+1, errs)
-            plt.savefig("NMF1DConv_%i.png"%(l+1), bbox_inches = 'tight')
+            if joint:
+                pre = "%sNMF1DJointIter%i"%(prefix, l+1)
+                plt.savefig("%s/NMF1DConv_%i.png"%(pre, l+1), bbox_inches = 'tight')
+            else:
+                plt.savefig("NMF1DConv_%i.png", bbox_inches = 'tight')
     return (W, H)
 
 def getComplexNMF1DTemplates(S, W, H, p = 2, audioParams = None):
@@ -446,6 +471,125 @@ def plotNMF1DConvSpectra(V, W, H, iter, errs, hopLength = -1, plotComponents = T
         errs = errs[1::]
     plt.semilogy(errs)
     plt.title("Errors")
+
+def plotNMF1DConvSpectraJoint(V, W, H, iter, errs, hopLength = -1, plotComponents = True, \
+        audioParams = None):
+    """
+    Plot NMF iterations on a log scale, showing V, H, and W*H, with the understanding
+    that V and W are two songs concatenated on top of each other
+    :param V: An N x M target
+    :param W: An N x K x T source/corpus matrix
+    :returns H: A KxM matrix of source activations for each column of V
+    :param iter: The iteration number
+    :param errs: Errors over time
+    :param hopLength: The hop length (for plotting)
+    """
+    import librosa
+    import librosa.display
+    K = W.shape[1]
+    if not plotComponents:
+        K = 0
+
+    N = int(W.shape[0]/2)
+    W1 = W[0:N, :, :]
+    W2 = W[N::, :, :]
+    V1 = V[0:N, :]
+    V2 = V[N::, :]
+    WH = multiplyConv1D(W, H)
+
+    if audioParams:
+        from SpectrogramTools import griffinLimInverse
+        from scipy.io import wavfile
+        import os
+        [Fs, prefix] = [audioParams['Fs'], audioParams['prefix']]
+        winSize = audioParams['winSize']
+        pre = "%sNMF1DJointIter%i"%(prefix, iter)
+        if not os.path.exists(pre):
+            os.mkdir(pre)
+        #Invert each Wt
+        for k in range(W1.shape[1]):
+            y_hat = griffinLimInverse(W1[:, k, :], winSize, hopLength)
+            y_hat = y_hat/np.max(np.abs(y_hat))
+            wavfile.write("%s/W1_%i.wav"%(pre, k), Fs, y_hat)
+            y_hat = griffinLimInverse(W2[:, k, :], winSize, hopLength)
+            y_hat = y_hat/np.max(np.abs(y_hat))
+            wavfile.write("%s/W2_%i.wav"%(pre, k), Fs, y_hat)
+        #Invert the audio
+        y_hat = griffinLimInverse(WH[0:N, :], winSize, hopLength)
+        y_hat = y_hat/np.max(np.abs(y_hat))
+        wavfile.write("%s/WH1.wav"%pre, Fs, y_hat)
+        y_hat = griffinLimInverse(WH[N::, :], winSize, hopLength)
+        y_hat = y_hat/np.max(np.abs(y_hat))
+        wavfile.write("%s/WH2.wav"%pre, Fs, y_hat)
+
+    plt.subplot(3, 2+K, 1)
+    if hopLength > -1:
+        librosa.display.specshow(librosa.amplitude_to_db(V1), hop_length = hopLength, \
+                                    y_axis = 'log', x_axis = 'time')
+    else:
+        plt.imshow(V1, cmap = 'afmhot', interpolation = 'nearest', aspect = 'auto')
+        plt.colorbar()
+    plt.title("V1")
+    plt.subplot(3, 2+K, 2)
+    if hopLength > -1:
+        librosa.display.specshow(librosa.amplitude_to_db(V2), hop_length = hopLength, \
+                                    y_axis = 'log', x_axis = 'time')
+    else:
+        plt.imshow(V2, cmap = 'afmhot', interpolation = 'nearest', aspect = 'auto')
+        plt.colorbar()
+    plt.title("V2")
+    plt.subplot(3, 2+K, 2+K+1)
+    
+    if hopLength > -1:
+        librosa.display.specshow(librosa.amplitude_to_db(WH[0:N, :]), hop_length = hopLength,\
+                                 y_axis = 'log', x_axis = 'time')
+    else:
+        plt.imshow(WH[0:N, :], cmap = 'afmhot', interpolation = 'nearest', aspect = 'auto')
+        plt.colorbar()
+    plt.title("W1*H")
+    errs = np.array(errs)
+    if errs.shape[0] > 1:
+        errs = errs[1::, :]
+    plt.subplot(3, 2+K, (2+K)*2+1)
+    plt.semilogy(errs[:, 0])
+    plt.title("Errors 1")
+    plt.subplot(3, 2+K, (2+K)*2+2)
+    plt.semilogy(errs[:, 1])
+    plt.title("Errors 2")
+
+    plt.subplot(3, 2+K, 2+K+2)
+    WH = multiplyConv1D(W, H)
+    if hopLength > -1:
+        librosa.display.specshow(librosa.amplitude_to_db(WH[N::, :]), hop_length = hopLength,\
+                                 y_axis = 'log', x_axis = 'time')
+    else:
+        plt.imshow(WH[N::, :], cmap = 'afmhot', interpolation = 'nearest', aspect = 'auto')
+        plt.colorbar()
+    plt.title("W1*H")
+
+    if plotComponents:
+        for k in range(K):
+            plt.subplot(3, 2+K, 3+k)
+            if hopLength > -1:
+                librosa.display.specshow(librosa.amplitude_to_db(W1[:, k, :]), \
+                    hop_length=hopLength, y_axis='log', x_axis='time')
+            else:
+                plt.imshow(W1[:, k, :], cmap = 'afmhot', \
+                        interpolation = 'nearest', aspect = 'auto')  
+                plt.colorbar()
+            plt.title("W1_%i"%k)
+            plt.subplot(3, 2+K, 2+K+3+k)
+            if hopLength > -1:
+                librosa.display.specshow(librosa.amplitude_to_db(W2[:, k, :]), \
+                    hop_length=hopLength, y_axis='log', x_axis='time')
+            else:
+                plt.imshow(W2[:, k, :], cmap = 'afmhot', \
+                        interpolation = 'nearest', aspect = 'auto')  
+                plt.colorbar()
+            plt.title("W2_%i"%k)
+            plt.subplot(3, 2+K, (2+K)*2+3+k)
+            plt.plot(H[k, :])
+            plt.title("H%i"%k)
 
 def plotNMF2DConvSpectra(V, W, H, iter, errs, hopLength = -1):
     """

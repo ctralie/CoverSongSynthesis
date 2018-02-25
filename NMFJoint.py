@@ -191,7 +191,7 @@ def getJointEuclideanError(A, Ap, B, W1, W2, H1, H2):
     res += getEuclideanError(B, multiplyConv2D(W1, H2))
     return res
 
-def doNMF2DConvJoint(A, Ap, B, K, T, F, L, plotfn = None):
+def doNMF2DConvJoint(A, Ap, B, K, T, F, L, plotfn = None, prefix = ""):
     """
     Implementing the Euclidean 2D NMF technique described in 
     "Nonnegative Matrix Factor 2-D Deconvolution
@@ -226,7 +226,8 @@ def doNMF2DConvJoint(A, Ap, B, K, T, F, L, plotfn = None):
         res=4
         plt.figure(figsize=((8+2*K)*res*1.2, 2*res))
         plotfn(A, Ap, B, W1, W2, H1, H2, 0, errs)
-        plt.savefig("NMF2DConvJoint_%i.png"%0, bbox_inches = 'tight')
+        pre = "%sNMFJointIter%i"%(prefix, iter)
+        plt.savefig("%s/NMF2DConvJoint_%i.png"%(prefix, 0), bbox_inches = 'tight')
     for l in range(L):
         print("Joint 2DNMF iteration %i of %i"%(l+1, L))
         #Step 1: Update Ws
@@ -290,12 +291,13 @@ def doNMF2DConvJoint(A, Ap, B, K, T, F, L, plotfn = None):
         if plotfn and ((l+1) == L):# or (l+1)%40 == 0):
             plt.clf()
             plotfn(A, Ap, B, W1, W2, H1, H2, l+1, errs)
-            plt.savefig("NMF2DConvJoint_%i.png"%(l+1), bbox_inches = 'tight')
+            pre = "%sNMFJointIter%i"%(prefix, iter)
+            plt.savefig("%s/NMF2DConvJoint_%i.png"%(prefix, l+1), bbox_inches = 'tight')
     return (W1, W2, H1, H2)
 
 
 def plotNMF2DConvJointSpectra(A, Ap, B, W1, W2, H1, H2, iter, errs, \
-        hopLength = -1, audioParams = None):
+        hopLength = -1, audioParams = None, plotElems = True):
     """
     Plot NMF iterations on a log scale, showing V, H, and W*H
     :param A: An M x N1 matrix for song A
@@ -313,23 +315,39 @@ def plotNMF2DConvJointSpectra(A, Ap, B, W1, W2, H1, H2, iter, errs, \
     import librosa
     import librosa.display
     K = W1.shape[1]
+    if not plotElems:
+        K = 0
 
     if audioParams:
-        from SpectrogramTools import griffinLimCQTInverse
+        from SpectrogramTools import griffinLimCQTInverse, griffinLimInverse
         from scipy.io import wavfile
         import os
-        pre = "NMFJointIter%i"%iter
+        [Fs, prefix] = [audioParams['Fs'], audioParams['prefix']]
+        bins_per_octave = -1
+        winSize = -1
+        if 'bins_per_octave' in audioParams:
+            bins_per_octave = audioParams['bins_per_octave']
+        if 'winSize' in audioParams:
+            winSize = audioParams['winSize']
+        pre = "%sNMFJointIter%i"%(prefix, iter)
         if not os.path.exists(pre):
             os.mkdir(pre)
-        [Fs, bins_per_octave] = [audioParams['Fs'], audioParams['bins_per_octave']]
         #Invert each Wt
         for k in range(W1.shape[1]):
-            y_hat = griffinLimCQTInverse(W1[:, k, :], Fs, hopLength, bins_per_octave, NIters=10)
-            y_hat = y_hat/np.max(np.abs(y_hat))
-            sio.wavfile.write("%s/W1_%i.wav"%(pre, k), Fs, y_hat)
-            y_hat = griffinLimCQTInverse(W2[:, k, :], Fs, hopLength, bins_per_octave, NIters=10)
-            y_hat = y_hat/np.max(np.abs(y_hat))
-            sio.wavfile.write("%s/W2_%i.wav"%(pre, k), Fs, y_hat)
+            if bins_per_octave > -1:
+                y_hat = griffinLimCQTInverse(W1[:, k, :], Fs, hopLength, bins_per_octave, NIters=10)
+                y_hat = y_hat/np.max(np.abs(y_hat))
+                sio.wavfile.write("%s/W1_%i.wav"%(pre, k), Fs, y_hat)
+                y_hat = griffinLimCQTInverse(W2[:, k, :], Fs, hopLength, bins_per_octave, NIters=10)
+                y_hat = y_hat/np.max(np.abs(y_hat))
+                sio.wavfile.write("%s/W2_%i.wav"%(pre, k), Fs, y_hat)
+            else:
+                y_hat = griffinLimInverse(W1[:, k, :], winSize, hopLength)
+                y_hat = y_hat/np.max(np.abs(y_hat))
+                sio.wavfile.write("%s/W1_%i.wav"%(pre, k), Fs, y_hat)
+                y_hat = griffinLimInverse(W2[:, k, :], winSize, hopLength)
+                y_hat = y_hat/np.max(np.abs(y_hat))
+                sio.wavfile.write("%s/W2_%i.wav"%(pre, k), Fs, y_hat)
 
     Lam11 = multiplyConv2D(W1, H1)
     Lam12 = multiplyConv2D(W1, H2)
@@ -358,10 +376,14 @@ def plotNMF2DConvJointSpectra(A, Ap, B, W1, W2, H1, H2, iter, errs, \
         plt.title("%s Iteration %i"%(s2, iter))
 
         if audioParams:
-            y_hat = griffinLimCQTInverse(Lam, Fs, hopLength, bins_per_octave, NIters=10)
-            y_hat = y_hat/np.max(np.abs(y_hat))
-            sio.wavfile.write("%s/%s.wav"%(pre, s1), Fs, y_hat)
-
+            if bins_per_octave > -1:
+                y_hat = griffinLimCQTInverse(Lam, Fs, hopLength, bins_per_octave, NIters=10)
+                y_hat = y_hat/np.max(np.abs(y_hat))
+                sio.wavfile.write("%s/%s.wav"%(pre, s1), Fs, y_hat)
+            else:
+                y_hat = griffinLimInverse(Lam, winSize, hopLength)
+                y_hat = y_hat/np.max(np.abs(y_hat))
+                sio.wavfile.write("%s/%s.wav"%(pre, s1), Fs, y_hat)
     plt.subplot(2, 8+2*K, 4)
     errs = np.array(errs)
     if len(errs) > 1:
