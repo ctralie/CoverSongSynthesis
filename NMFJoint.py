@@ -1,6 +1,7 @@
 import numpy as np
 import scipy.io as sio
 import matplotlib.pyplot as plt
+import os
 from NMF import *
 
 def plotJointNMFwGT(Xs, Us, Vs, VStar, UsGT, VsGT, errs):
@@ -226,8 +227,8 @@ def doNMF2DConvJoint(A, Ap, B, K, T, F, L, plotfn = None, prefix = ""):
         res=4
         plt.figure(figsize=((8+2*K)*res*1.2, 2*res))
         plotfn(A, Ap, B, W1, W2, H1, H2, 0, errs)
-        pre = "%sNMFJointIter%i"%(prefix, iter)
-        plt.savefig("%s/NMF2DConvJoint_%i.png"%(prefix, 0), bbox_inches = 'tight')
+        pre = "%sNMFJointIter%i"%(prefix, 0)
+        plt.savefig("%s/NMF2DConvJoint_%i.png"%(pre, 0), bbox_inches = 'tight')
     for l in range(L):
         print("Joint 2DNMF iteration %i of %i"%(l+1, L))
         #Step 1: Update Ws
@@ -288,16 +289,16 @@ def doNMF2DConvJoint(A, Ap, B, K, T, F, L, plotfn = None, prefix = ""):
         H2 = H2*(H2Nums/H2Denoms)
         print("Elapsed Time All Hs: %.3g"%(time.time()-ticouter))
         errs.append(getJointEuclideanError(A, Ap, B, W1, W2, H1, H2))
-        if plotfn and ((l+1) == L):# or (l+1)%40 == 0):
+        if plotfn and ((l+1) == L or (l+1)%30 == 0):
             plt.clf()
             plotfn(A, Ap, B, W1, W2, H1, H2, l+1, errs)
-            pre = "%sNMFJointIter%i"%(prefix, iter)
-            plt.savefig("%s/NMF2DConvJoint_%i.png"%(prefix, l+1), bbox_inches = 'tight')
+            pre = "%sNMFJointIter%i"%(prefix, l+1)
+            plt.savefig("%s/NMF2DConvJoint_%i.png"%(pre, l+1), bbox_inches = 'tight')
     return (W1, W2, H1, H2)
 
 
 def plotNMF2DConvJointSpectra(A, Ap, B, W1, W2, H1, H2, iter, errs, \
-        hopLength = -1, audioParams = None, plotElems = True):
+        hopLength = -1, prefix = "", audioParams = None, plotElems = True):
     """
     Plot NMF iterations on a log scale, showing V, H, and W*H
     :param A: An M x N1 matrix for song A
@@ -318,20 +319,20 @@ def plotNMF2DConvJointSpectra(A, Ap, B, W1, W2, H1, H2, iter, errs, \
     if not plotElems:
         K = 0
 
+    pre = "%sNMFJointIter%i"%(prefix, iter)
+    if not os.path.exists(pre):
+        os.mkdir(pre)
+
     if audioParams:
         from SpectrogramTools import griffinLimCQTInverse, griffinLimInverse
         from scipy.io import wavfile
-        import os
-        [Fs, prefix] = [audioParams['Fs'], audioParams['prefix']]
+        [Fs, prefix] = audioParams['Fs']
         bins_per_octave = -1
         winSize = -1
         if 'bins_per_octave' in audioParams:
             bins_per_octave = audioParams['bins_per_octave']
         if 'winSize' in audioParams:
             winSize = audioParams['winSize']
-        pre = "%sNMFJointIter%i"%(prefix, iter)
-        if not os.path.exists(pre):
-            os.mkdir(pre)
         #Invert each Wt
         for k in range(W1.shape[1]):
             if bins_per_octave > -1:
@@ -353,6 +354,8 @@ def plotNMF2DConvJointSpectra(A, Ap, B, W1, W2, H1, H2, iter, errs, \
     Lam12 = multiplyConv2D(W1, H2)
     Lam21 = multiplyConv2D(W2, H1)
     Lam22 = multiplyConv2D(W2, H2)
+    sio.savemat("%s/Iter%i.mat"%(pre, iter), {"W1":W1, "W2":W2, "H1":H1, "H2":H2,\
+        "Lam11":Lam11, "Lam12":Lam12, "Lam21":Lam21, "Lam22":Lam22})
     for k, (V, Lam, s1, s2) in enumerate(zip([A, Ap, B, None], [Lam11, Lam21, Lam12, Lam22], \
             ["A", "Ap", "B", "Bp"],\
             ["$\Lambda_{W1, H1}$", "$\Lambda_{W2, H1}$", "$\Lambda_{W1, H2}$", "$\Lambda_{W2, H2}$"])):

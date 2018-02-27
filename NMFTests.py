@@ -306,7 +306,7 @@ def testNMF1DTranslate():
     hopSize = 256
     winSize = 2048
     K=20
-    T=25
+    T=16
     NIters=100
 
     #Step 1: Load in A, Ap, and B
@@ -318,6 +318,7 @@ def testNMF1DTranslate():
     Ap = Ap[0:Fs*30]
     B, Fs = librosa.load("music/MJBad.mp3", sr=Fs)
     B = B[Fs*3:Fs*20]
+    N = B.shape[0]
 
     #Step 1: Make 1D Dictionaries for every pitch shift
     plotfn = lambda V, W, H, iter, errs: \
@@ -330,11 +331,13 @@ def testNMF1DTranslate():
         print("Doing shift %i"%shift)
         SA = STFT(pyrb.pitch_shift(A, Fs, shift), winSize, hopSize)
         SAp = STFT(pyrb.pitch_shift(Ap, Fs, shift), winSize, hopSize)
+        #SA, SAperc = librosa.decompose.hpss(SA)
+        #SAp, SApperc = librosa.decompose.hpss(SAp)
         N = SA.shape[0]
         S = np.concatenate((np.abs(SA), np.abs(SAp)), 0)
         (W, H) = doNMF1DConv(S, K, T, NIters, plotfn=plotfn, joint=True, prefix="Shift%i"%shift)
-        W1i = W[:, 0:N, :]
-        W2i = W[:, N::, :]
+        W1i = W[0:N, :, :]
+        W2i = W[N::, :, :]
         if W1.size == 0:
             W1 = W1i
             W2 = W2i
@@ -343,15 +346,28 @@ def testNMF1DTranslate():
             W2 = np.concatenate((W2, W2i), 1)
         print("Elapsed Time: %.3g"%(time.time()-tic))
         sio.savemat("Ws1DJoint.mat", {"W1":W1, "W2":W2})
+    """
+    W = sio.loadmat("Ws1DJoint.mat")
+    [W1, W2] = [W['W1'], W['W2']]
+    """
+
     #Step 3: Represent song B in dictionary W1
     SB = np.abs(STFT(B, winSize, hopSize))
+    #SB, SBperc = librosa.decompose.hpss(SB)
     plotfn = lambda V, W, H, iter, errs: \
-        plotNMF1DConvSpectra(V, W, H, iter, errs, hopLength = hopSize)
-    (W, H) = doNMF1DConv(SB, K, T, NIters*2, plotfn=plotfn)
+        plotNMF1DConvSpectra(V, W, H, iter, errs, \
+        hopLength = hopSize, plotComponents=False)
+    (W, H) = doNMF1DConv(SB, K, T, NIters, W=W1, r=12, p=10,\
+                    plotfn=plotfn, plotComponents=False)
+    sio.savemat("H.mat", {"H":H})
+    SB = multiplyConv1D(W1, H)
+    B = griffinLimInverse(SB, winSize, hopSize)
+    B = B/np.max(np.abs(B))
+    wavfile.write("B.wav", Fs, B)
     SBp = multiplyConv1D(W2, H)
     Bp = griffinLimInverse(SBp, winSize, hopSize)
     Bp = Bp/np.max(np.abs(Bp))
-    wavefile.write("Bp.wav", Fs, Bp)
+    wavfile.write("Bp.wav", Fs, Bp)
 
 
 
@@ -372,29 +388,36 @@ def testNMF2DJointMusic():
     hopSize = 64
     bins_per_octave = 24
     noctaves = 7
-    K = 4
-    T = 40
-    F = 18
+    K = 8
+    T = 80
+    F = 36
     NIters = 440
 
+    """
     res = {}
     for (V, s) in zip([A, Ap, B], ["A", "Ap", "B"]):
         C = librosa2.cqt(y=V, sr=Fs, hop_length=hopSize, n_bins=noctaves*bins_per_octave,\
                 bins_per_octave=bins_per_octave)
         C = np.abs(C)
         res[s] = C
-        """
         y_hat = griffinLimCQTInverse(C, Fs, hopSize, bins_per_octave, NIters=10)
         y_hat = y_hat/np.max(np.abs(y_hat))
         sio.wavfile.write("%sGTInverted.wav"%s, Fs, y_hat)
-        """
+    [CA, CAp, CB] = [res['A'], res['Ap'], res['B']]
+    """
+    res = sio.loadmat("Nakamura.mat")
     [CA, CAp, CB] = [res['A'], res['Ap'], res['B']]
 
     plotfn = lambda A, Ap, B, W1, W2, H1, H2, iter, errs: \
             plotNMF2DConvJointSpectra(A, Ap, B, W1, W2, H1, H2, iter, errs,\
-            hopLength = hopSize, audioParams={'Fs':Fs, 'bins_per_octave':bins_per_octave, 'prefix':''})
+            hopLength = hopSize)#, audioParams={'Fs':Fs, 'bins_per_octave':bins_per_octave, 'prefix':''})
     (W1, W2, H1, H2) = doNMF2DConvJoint(CA, CAp, CB, K, T, F, L=NIters, plotfn=plotfn)
     sio.savemat("SmoothCriminalNMF2DJoint.mat", {"W1":W1, "W2":W2, "H1":H1, "H2":H2})
+    CA = multiplyConv2D(W1, H1)
+    CAp = multiplyConv2D(W2, H1)
+    CB = multiplyConv2D(W1, H2)
+    CBp = multiplyConv2D(W2, H2)
+    sio.savemat("SmoothCriminalNMF2DJointCs.mat", {"CA":CA, "CAp":CAp, "CB":CB, "CBp":CBp})
 
 
 

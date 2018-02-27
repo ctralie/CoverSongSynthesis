@@ -203,7 +203,7 @@ def multiplyConv2D(W, H):
             Lam += Wt.dot(Hf)
     return Lam
 
-def doNMF1DConv(V, K, T, L, W = np.array([]), plotfn = None, plotComponents = True, \
+def doNMF1DConv(V, K, T, L, r = 0, p = -1, W = np.array([]), plotfn = None, plotComponents = True, \
         joint = False, prefix=""):
     """
     Implementing the technique described in 
@@ -214,6 +214,8 @@ def doNMF1DConv(V, K, T, L, W = np.array([]), plotfn = None, plotComponents = Tr
     :param K: Number of latent factors
     :param T: Time extent of W matrices
     :param L: Number of iterations
+    :param r: Width of the repeated activation filter
+    :param p: Degree of polyphony
     :param plotfn: A function used to plot each iteration, which should\
         take the arguments (V, W, H, iter)
     :param joint: If true, it's understood that V and W are two songs concatenated\
@@ -223,6 +225,7 @@ def doNMF1DConv(V, K, T, L, W = np.array([]), plotfn = None, plotComponents = Tr
         W is an NxKxT matrix of K sources over spatiotemporal spans NxT
         H is a KxM matrix of source activations for each column of V
     """
+    import scipy.ndimage
     N = V.shape[0]
     M = V.shape[1]
     WFixed = False
@@ -231,6 +234,7 @@ def doNMF1DConv(V, K, T, L, W = np.array([]), plotfn = None, plotComponents = Tr
     else:
         WFixed = True
         K = W.shape[1]
+        print("K = ", K)
     H = np.random.rand(K, M)
     WH = multiplyConv1D(W, H)
     if joint:
@@ -250,10 +254,22 @@ def doNMF1DConv(V, K, T, L, W = np.array([]), plotfn = None, plotComponents = Tr
             plt.figure(figsize=((4+pK)*res, res))
         if not joint:
             plotfn(V, W, H, 0, errs) 
-            plt.savefig("NMF1DConv_%i.png", bbox_inches = 'tight')
+            plt.savefig("NMF1DConv_0.png", bbox_inches = 'tight')
     for l in range(L):
-        print("NMF iteration %i of %i"%(l+1, L))            
         #KL Divergence Version
+        print("NMF iteration %i of %i"%(l+1, L))            
+        #Step 1: Avoid repeated activations
+        iterfac = 1-float(l+1)/L 
+        R = np.array(H)
+        if r > 0:
+            MuH = scipy.ndimage.filters.maximum_filter(H, size=(1, r))
+            R[R<MuH] = R[R<MuH]*iterfac
+        #Step 2: Restrict number of simultaneous activations
+        P = np.array(R)
+        if p > -1:
+            colCutoff = -np.sort(-R, 0)[p, :]
+            P[P < colCutoff[None, :]] = P[P < colCutoff[None, :]]*iterfac
+        H = P
         WH = multiplyConv1D(W, H)
         WH[WH == 0] = 1
         VLam = V/WH
@@ -279,7 +295,7 @@ def doNMF1DConv(V, K, T, L, W = np.array([]), plotfn = None, plotComponents = Tr
             errs.append([getKLError(V[0:N1, :], WH[0:N1, :]), \
                     getKLError(V[N1::, :], WH[N1::, :])])
         else:
-            errs.append([getKLError(V, WH)])
+            errs.append(getKLError(V, WH))
         if plotfn and ((l+1) == L):# or (l+1)%40 == 0):
             plt.clf()
             plotfn(V, W, H, l+1, errs)
@@ -287,7 +303,7 @@ def doNMF1DConv(V, K, T, L, W = np.array([]), plotfn = None, plotComponents = Tr
                 pre = "%sNMF1DJointIter%i"%(prefix, l+1)
                 plt.savefig("%s/NMF1DConv_%i.png"%(pre, l+1), bbox_inches = 'tight')
             else:
-                plt.savefig("NMF1DConv_%i.png", bbox_inches = 'tight')
+                plt.savefig("NMF1DConv_%i.png"%(l+1), bbox_inches = 'tight')
     return (W, H)
 
 def getComplexNMF1DTemplates(S, W, H, p = 2, audioParams = None):
@@ -470,6 +486,7 @@ def plotNMF1DConvSpectra(V, W, H, iter, errs, hopLength = -1, plotComponents = T
     if len(errs) > 1:
         errs = errs[1::]
     plt.semilogy(errs)
+    plt.ylim([0.9*np.min(errs), np.max(errs)*1.1])
     plt.title("Errors")
 
 def plotNMF1DConvSpectraJoint(V, W, H, iter, errs, hopLength = -1, plotComponents = True, \
@@ -552,9 +569,11 @@ def plotNMF1DConvSpectraJoint(V, W, H, iter, errs, hopLength = -1, plotComponent
         errs = errs[1::, :]
     plt.subplot(3, 2+K, (2+K)*2+1)
     plt.semilogy(errs[:, 0])
+    plt.ylim([0.9*np.min(errs[:, 0]), np.max(errs[:, 0])*1.1])
     plt.title("Errors 1")
     plt.subplot(3, 2+K, (2+K)*2+2)
     plt.semilogy(errs[:, 1])
+    plt.ylim([0.9*np.min(errs[:, 1]), np.max(errs[:, 1])*1.1])
     plt.title("Errors 2")
 
     plt.subplot(3, 2+K, 2+K+2)
