@@ -353,7 +353,7 @@ def getComplexNMF1DTemplates(S, W, H, p = 2, audioParams = None):
                 X = Xk
             else:
                 X += Xk
-            wavfile.write("%s_X%i.wav"%(fileprefix, k), Fs, Xk)
+            wavfile.write("%s_%i.wav"%(fileprefix, k), Fs, Xk)
             plt.clf()
             plt.plot(Ratios[k])
             plt.title("Ratio, %.3g Above 0.1"%(np.sum(Ratios[k] > 0.1)/Ratios[k].size))

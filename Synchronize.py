@@ -114,9 +114,9 @@ def synchronize(filename1, filename2, hopSize, TempoBiases, bSub, FeatureParams,
     :param outputSnippets: Whether to output aligned audio snippets block by block
     :param doNegative: Whether to sample negative matches
     """
-    print "Loading %s..."%filename1
+    print("Loading %s..."%filename1)
     (XAudio1, Fs) = getAudioLibrosa(filename1)
-    print "Loading %s..."%filename2
+    print("Loading %s..."%filename2)
     (XAudio2, Fs) = getAudioLibrosa(filename2)
 
     maxScore = 0.0
@@ -124,20 +124,20 @@ def synchronize(filename1, filename2, hopSize, TempoBiases, bSub, FeatureParams,
 
     for TempoBias1 in TempoBiases:
         for TempoBias2 in TempoBiases:
-            print "Doing TempoBias1 = %i, TempoBias2 = %i..."%(TempoBias1, TempoBias2)
+            print("Doing TempoBias1 = %i, TempoBias2 = %i..."%(TempoBias1, TempoBias2))
             (tempo, beats1) = getBeats(XAudio1, Fs, TempoBias1, hopSize, filename1)
             beats1 = expandBeats(beats1, bSub)
             (Features1, O1) = getBlockWindowFeatures((XAudio1, Fs, tempo, beats1, hopSize, FeatureParams))
             (tempo, beats2) = getBeats(XAudio2, Fs, TempoBias2, hopSize, filename2)
             beats2 = expandBeats(beats2, bSub)
             (Features2, O2) = getBlockWindowFeatures((XAudio2, Fs, tempo, beats2, hopSize, FeatureParams))
-            print "Doing similarity fusion"
+            print("Doing similarity fusion")
             K = 20
             NIters = 3
             res = getCSMSmithWatermanScoresEarlyFusionFull(Features1, O1, Features2, O2, Kappa, K, NIters, CSMTypes, doPlot = True, conservative = False)
-            print "score = ", res['score']
+            print("score = ", res['score'])
             if res['score'] > maxScore:
-                print "New maximum score!"
+                print("New maximum score!")
                 maxScore = res['score']
                 maxRes = res
                 res['beats1'] = beats1

@@ -303,9 +303,10 @@ def testNMF1DMusic():
 def testNMF1DTranslate():
     import librosa
     from scipy.io import wavfile
+    from GeometricCoverSongs.CSMSSMTools import getCSM
     hopSize = 256
     winSize = 2048
-    K=20
+    K=5
     T=16
     NIters=100
 
@@ -322,20 +323,24 @@ def testNMF1DTranslate():
 
     #Step 1: Make 1D Dictionaries for every pitch shift
     plotfn = lambda V, W, H, iter, errs: \
+        plotNMF1DConvSpectra(V, W, H, iter, errs, \
+        hopLength = hopSize, plotComponents=False)
+    plotfnjoint = lambda V, W, H, iter, errs: \
         plotNMF1DConvSpectraJoint(V, W, H, iter, errs, hopLength = hopSize, \
         audioParams = {'Fs':Fs, 'winSize':winSize, 'prefix':"Shift%i"%shift})
+    """
     W1 = np.array([])
     W2 = np.array([])
+    Ss1 = []
+    Ss2 = []
     for shift in range(-6, 7):
         tic = time.time()
         print("Doing shift %i"%shift)
         SA = STFT(pyrb.pitch_shift(A, Fs, shift), winSize, hopSize)
         SAp = STFT(pyrb.pitch_shift(Ap, Fs, shift), winSize, hopSize)
-        #SA, SAperc = librosa.decompose.hpss(SA)
-        #SAp, SApperc = librosa.decompose.hpss(SAp)
         N = SA.shape[0]
         S = np.concatenate((np.abs(SA), np.abs(SAp)), 0)
-        (W, H) = doNMF1DConv(S, K, T, NIters, plotfn=plotfn, joint=True, prefix="Shift%i"%shift)
+        (W, H) = doNMF1DConv(S, K, T, NIters, plotfn=plotfnjoint, joint=True, prefix="Shift%i"%shift)
         W1i = W[0:N, :, :]
         W2i = W[N::, :, :]
         if W1.size == 0:
@@ -344,31 +349,94 @@ def testNMF1DTranslate():
         else:
             W1 = np.concatenate((W1, W1i), 1)
             W2 = np.concatenate((W2, W2i), 1)
+        (Ss1i, Ratios1) = getComplexNMF1DTemplates(SA, W1i, H, p = 2, audioParams = {'winSize':winSize, \
+            'hopSize':hopSize, 'Fs':Fs, 'fileprefix':'Shift%iNMF1DJointIter%i/A'%(shift, NIters)})
+        Ss1 += Ss1i
+        (Ss2i, Ratios2) = getComplexNMF1DTemplates(SAp, W2i, H, p = 2, audioParams = {'winSize':winSize, \
+            'hopSize':hopSize, 'Fs':Fs, 'fileprefix':'Shift%iNMF1DJointIter%i/Ap'%(shift, NIters)})
+        Ss2 += Ss2i
         print("Elapsed Time: %.3g"%(time.time()-tic))
         sio.savemat("Ws1DJoint.mat", {"W1":W1, "W2":W2})
+        sio.savemat("Ss.mat", {"Ss1":Ss1, "Ss2":Ss2})
     """
-    W = sio.loadmat("Ws1DJoint.mat")
-    [W1, W2] = [W['W1'], W['W2']]
-    """
+    res = sio.loadmat("Ws1DJoint.mat")
+    W1 = res['W1']
+    W2 = res['W2']
+    res = sio.loadmat("Ss.mat")
+    Ss1 = res['Ss1']
+    Ss2 = res['Ss2']
 
     #Step 3: Represent song B in dictionary W1
-    SB = np.abs(STFT(B, winSize, hopSize))
-    #SB, SBperc = librosa.decompose.hpss(SB)
-    plotfn = lambda V, W, H, iter, errs: \
-        plotNMF1DConvSpectra(V, W, H, iter, errs, \
-        hopLength = hopSize, plotComponents=False)
-    (W, H) = doNMF1DConv(SB, K, T, NIters, W=W1, r=12, p=10,\
+    if not os.path.exists("NMF1DB"):
+        os.mkdir("NMF1DB")
+    SB = STFT(B, winSize, hopSize)
+    """
+    (W, H) = doNMF1DConv(np.abs(SB), K, T, NIters, W=W1, r=0, p=-1,\
                     plotfn=plotfn, plotComponents=False)
-    sio.savemat("H.mat", {"H":H})
-    SB = multiplyConv1D(W1, H)
-    B = griffinLimInverse(SB, winSize, hopSize)
-    B = B/np.max(np.abs(B))
-    wavfile.write("B.wav", Fs, B)
-    SBp = multiplyConv1D(W2, H)
-    Bp = griffinLimInverse(SBp, winSize, hopSize)
-    Bp = Bp/np.max(np.abs(Bp))
-    wavfile.write("Bp.wav", Fs, Bp)
+    sio.savemat("HB.mat", {"H":H})
+    """
+    H = sio.loadmat("HB.mat")["H"]
+    (SsB, RatiosB) = getComplexNMF1DTemplates(SB, W1, H, p = 2, audioParams = {'winSize':winSize, \
+        'hopSize':hopSize, 'Fs':Fs, 'fileprefix':'NMF1DB/B'})
 
+    #Step 4: Figure out chunks from tracks in A that approximate tracks in B
+    #and use them to create B' chunks
+    foldername = "1DTrackResults"
+    if not os.path.exists(foldername):
+        os.mkdir(foldername)
+    SsBp = []
+    Kappa = 5 #Coherence parameter
+    SBpFinal = np.zeros_like(SB)
+    for i, (SA, SAp, SB) in enumerate(zip(Ss1, Ss2, SsB)):
+        print("Synthesizing track %i of %i"%(i+1, len(Ss1)))
+        #Compute normalized spectrogram similarities for each window
+        SBp = np.zeros_like(SB)
+        MagSA = np.sqrt(np.abs(np.sum(SA*np.conj(SA), 0)))
+        MagSA[MagSA == 0] = 1
+        MagSB = np.sqrt(np.abs(np.sum(SB*np.conj(SB), 0)))
+        MagSB[MagSB == 0] = 1
+        SA = SA/MagSA[None, :]
+        SB = SB/MagSB[None, :]
+        SAM = np.abs(SA)
+        for k in range(SB.shape[1]):
+            x = np.abs(SB[:, k].flatten())
+            D = getCSM(x[None, :], SAM.T).flatten()
+            idx = np.argmin(D)
+            dist = D[idx]
+            if k > 0:
+                if D[idx-1] < (1+Kappa)*dist:
+                    idx = idx-1
+                    dist = D[idx]
+            #Scale by power ratio
+            SBp[:, k] = SAp[:, idx]*MagSB[k]/MagSA[idx]
+        SBpFinal += SBp
+
+        y = griffinLimInverse(SBp, winSize, hopSize)
+        y = y/np.max(np.abs(y))
+        wavfile.write("%s/Bp%i.wav"%(foldername, i), Fs, y)
+
+        y = griffinLimInverse(SBpFinal, winSize, hopSize)
+        y = y/np.max(np.abs(y))
+        wavfile.write("%s/BpFinal.wav"%(foldername), Fs, y)
+
+    #Step 5: Output all tracks to disk
+    for i, (SA, SAp, SB, SBp) in enumerate(zip(Ss1, Ss2, SsB, SsBp)):
+        plt.clf()
+        plt.plot(RatiosB[i])
+        plt.title("Ratio, %.3g Above 0.1"%(np.sum(RatiosB[i] > 0.1)/RatiosB[i].size))
+        plt.savefig("%s/B%iPower.svg"%(foldername, i), bbox_inches = 'tight')
+        y = griffinLimInverse(SA, winSize, hopSize)
+        y = y/np.max(np.abs(y))
+        wavfile.write("%s/A%i.wav"%(foldername, i), Fs, y)
+        y = griffinLimInverse(SAp, winSize, hopSize)
+        y = y/np.max(np.abs(y))
+        wavfile.write("%s/Ap%i.wav"%(foldername, i), Fs, y)
+        y = griffinLimInverse(SB, winSize, hopSize)
+        y = y/np.max(np.abs(y))
+        wavfile.write("%s/B%i.wav"%(foldername, i), Fs, y)
+        y = griffinLimInverse(SBp, winSize, hopSize)
+        y = y/np.max(np.abs(y))
+        wavfile.write("%s/Bp%i.wav"%(foldername, i), Fs, y)
 
 
 def testNMF2DJointMusic():
