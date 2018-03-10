@@ -203,6 +203,25 @@ def multiplyConv2D(W, H):
             Lam += Wt.dot(Hf)
     return Lam
 
+def multiplyConv2DWGrad(W, H, V, VLam):
+    """
+    Compute the 2D convolutional multiplicative update
+    for W
+    :param W: A NxKxT matrix of K sources over spatiotemporal spans NxT\
+    :param H: A KxMxF matrix of source activations for each submatrix of W\
+            over F transpositions over M time
+    """
+    WNums = np.zeros(W.shape) #Numerator
+    WDenoms = np.zeros(W.shape) #Denomenator
+    for f in range(H.shape[2]):
+        thisV = shiftMatLRUD(V, di=-f)
+        thisVLam = shiftMatLRUD(VLam, di=-f)
+        for t in range(W.shape[2]):
+            thisH = shiftMatLRUD(H[:, :, f], dj=t)
+            WNums[:, :, t] += thisV.dot(thisH.T)
+            WDenoms[:, :, t] += thisVLam.dot(thisH.T)
+    return WNums/WDenoms
+
 def doNMF1DConv(V, K, T, L, r = 0, p = -1, W = np.array([]), plotfn = None, plotComponents = True, \
         joint = False, prefix=""):
     """
@@ -397,42 +416,20 @@ def doNMF2DConv(V, K, T, F, L, W = np.array([]), plotfn = None):
         #Step 1: Update Ws
         if not WFixed:
             VLam = multiplyConv2D(W, H)
-            #VLam[VLam == 0] = 1
-            WNums = np.zeros(W.shape)
-            WDenoms = np.zeros(W.shape)
-            for f in range(F):
-                tic = time.time()
-                thisV = shiftMatLRUD(V, di=-f)
-                thisVLam = shiftMatLRUD(VLam, di=-f)
-                for t in range(T):
-                    thisH = shiftMatLRUD(H[:, :, f], dj=t)
-                    WNums[:, :, t] += thisV.dot(thisH.T)
-                    WDenoms[:, :, t] += thisVLam.dot(thisH.T)
-                toc = time.time()
-                print("Elapsed Time Wf Iter: %.3g"%(toc-tic))
-            #WDenoms[WDenoms == 0] = 1
-            W = W*(WNums/WDenoms)
+            W = W*multiplyConv2DWGrad(W, H, V, VLam)
 
         #Step 2: Update Hs
         VLam = multiplyConv2D(W, H)
-        #VLam[VLam == 0] = 1
-        HNums = np.zeros(H.shape)
-        HDenoms = np.zeros(H.shape)
-        for t in range(T):
-            thisV = shiftMatLRUD(V, dj=-t)
-            thisVLam = shiftMatLRUD(VLam, dj=-t)
-            for f in range(F):
-                thisW = shiftMatLRUD(W[:, :, t], di=f)
-                HNums[:, :, f] += (thisW.T).dot(thisV)
-                HDenoms[:, :, f] += (thisW.T).dot(thisVLam)
-        #HDenoms[HDenoms == 0] = 1
-        H = H*(HNums/HDenoms)
+        HT = np.swapaxes(H, 0, 1)
+        WT = np.swapaxes(W, 0, 1)
+        Fac = multiplyConv2DWGrad(HT, WT, V.T, VLam.T)
+        H = H*np.swapaxes(Fac, 0, 1)
+
         errs.append(getEuclideanError(V, multiplyConv2D(W, H)))
         if plotfn and ((l+1) == L or (l+1)%40 == 0):
             plt.clf()
             plotfn(V, W, H, l+1, errs)
             plt.savefig("NMF2DConv_%i.png"%(l+1), bbox_inches = 'tight')
-        #TODO: Balance normalize W and H
     return (W, H)
 
 def plotNMF1DConvSpectra(V, W, H, iter, errs, hopLength = -1, plotComponents = True):

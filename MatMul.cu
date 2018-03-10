@@ -121,9 +121,88 @@ __global__ void MatMulConv2D(float* W, float* H, float* Lam, int M, int N, int K
                 res += x[(F+threadIdx.x-f)*T + t]*x[hoff+(T+threadIdx.y-t)*F+f];
             }
         }
-        __syncthreads();//The lack of this sync was causing a major bug!!!
+        __syncthreads();//The lack of this sync at the end of each k
+        // was causing a major bug!!!
     }
     if (i < M && j < N) {
         Lam[i*N+j] = res;
+    }
+}
+
+
+__global__ void MatMulConv2DWGrad(float* W, float* H, float* V, float* VLam, 
+        int M, int N, int K, int T, int F, int FBlocks, int JBlocks) {
+    /*
+    Perform 2D convolutional matrix multiplicative update of W
+    :param W: An MxKxT input matrix
+    :param H: A KxNxF input matrix
+    :param V: A MxN target matrix
+    :param VLam: An MxN matrix which is W*H 2DConv
+    :param VLam: The current MxN approximation of V
+    :param M, N, K, T, F: Dimensions
+    :param FBlocks: Number of blocks of F padding to load in per grid block
+    :param JBlocks: Assuming 1 block of t values
+    */
+
+    /*Shared Memory Layout in x, which holds chunks of V/VLam and H that are 
+        shared with overlapping convolutions.  For a block size of B:
+            1) V goes from iblock:iblock+B+F-1, j:j+B-1
+            2) VLam goes from iblock:iblock+B+F-1, j:j+B-1 at an offset of
+                (B+F)*B
+            3) H goes from k, j-T:j+B-1, 0:F at an offset of 2*(B+F)*B
+    */
+    extern __shared__ float x[]; 
+    int vlamoff = (blockDim.x+F)*blockDim.x; //Offset of VLam chunk in shared memory
+    int hoff = 2*vlamoff; //Offset of H chunk in shared memory
+    int iblock = blockIdx.x*blockDim.x;
+    int k = blockIdx.y;
+    int tblock = blockIdx.z*blockDim.z;
+    int jblock;
+    int i = iblock + threadIdx.x;
+    int t = tblock + threadIdx.y;
+    int KT = K*T;
+    int j, f;
+    int thist, thisf;
+    int thisi, thisj;
+    float num = 0.0;
+    float denom = 0.0;
+
+    //Loop over chunks of the j dimension
+    for (jblock = 0; jblock < JBlocks; jblock += blockDim.x) {
+        j = jblock+threadIdx.y;
+        //Step 1: Copy out sections of V and VLam
+        for (f = 0; f < FBlocks+1; f++) {
+            if (f == FBlocks) {
+                //On the last one, copy over interval from [iblock, iblock+B-1]
+                thisi = i; 
+                thisf = threadIdx.x;
+            }
+            else{ 
+                //For the other chunks, copy over interval from [iblock+B, iblock+B+F-1]
+                thisi = i+blockDim.x+f*blockDim.x;
+                if (thisi >= iblock) {
+                    continue; //Past F boundary for block at iblock-1
+                }
+                thisf = f*blockDim.x+threadIdx.x;
+            }
+
+            thist = t*blockDim.y + threadIdx.y;
+            if (thist >= T) {
+                continue;
+            }
+            //Pull out V[thisi, j]
+            if (thisi < 0 || thisi >= M) {
+                x[T*thisf+thist] = 0;
+            }
+            else {
+                x[T*thisf+thist] = W[thisi*KT+k*T+thist];
+            }
+
+        }
+        __syncthreads();
+        //Step 2: Copy out sections of H
+
+
+        //Step 3: Do multiplication
     }
 }
