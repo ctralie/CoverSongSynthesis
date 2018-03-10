@@ -179,23 +179,20 @@ __global__ void MatMulConv2DWGrad(float* W, float* H, float* V, float* VLam,
             }
             else{ 
                 //For the other chunks, copy over interval from [iblock+B, iblock+B+F-1]
-                thisi = i+blockDim.x+f*blockDim.x;
-                if (thisi >= iblock) {
-                    continue; //Past F boundary for block at iblock-1
+                thisf = blockDim.x+f*blockDim.x+threadIdx.x;
+                if (thisf >= blockDim.x+F) {
+                    continue; //Past F boundary
                 }
-                thisf = f*blockDim.x+threadIdx.x;
+                thisi = i+blockDim.x+f*blockDim.x;
             }
-
-            thist = t*blockDim.y + threadIdx.y;
-            if (thist >= T) {
-                continue;
-            }
-            //Pull out V[thisi, j]
+            //Pull out V[thisi, j] and VLam[thisi, j]
             if (thisi < 0 || thisi >= M) {
-                x[T*thisf+thist] = 0;
+                x[T*thisf+j] = 0;
+                x[vlamoff+T*thisf+j] = 0;
             }
             else {
-                x[T*thisf+thist] = W[thisi*KT+k*T+thist];
+                x[T*thisf+j] = V[thisi*N+j];
+                x[vlamoff+T*thisf+j] = VLam[thisi*N+j];
             }
 
         }
