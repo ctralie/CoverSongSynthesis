@@ -84,7 +84,7 @@ def testNMF2DMultiplyGPU():
     blockdim = 32
     M = 1025
     K = 10
-    T = 20
+    T = 40
     F = 40
     N = 1000
     W = np.random.randn(M, K, T)
@@ -191,5 +191,5 @@ def testNMF2DWGradientGPU():
     #plt.show()
 
 if __name__ == '__main__':
-    #testNMF2DMultiplyGPU()
-    testNMF2DWGradientGPU()
+    testNMF2DMultiplyGPU()
+    #testNMF2DWGradientGPU()

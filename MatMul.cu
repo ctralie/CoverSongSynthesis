@@ -97,13 +97,14 @@ __global__ void MatMulConv2D(float* W, float* H, float* Lam, int M, int N, int K
                 if (thisj >= jblock) {
                     continue; //Past T boundary for block at jblock-1
                 }
+                thist = t*blockDim.y+threadIdx.y;
             }
             for (f = 0; f < FBlocks; f++) {
                 thisf = f*blockDim.x + threadIdx.x;
                 if (thisf >= F) {
                     continue;
                 }
-                //Pull out H[k, thisj, f] at put in at an offset
+                //Pull out H[k, thisj, f] and put in at an offset
                 if (thisj < 0 || thisj >= N) {
                     x[hoff + F*thist+thisf] = 0;
                 }
@@ -160,7 +161,7 @@ __global__ void MatMulConv2DWGrad(float* W, float* H, float* V, float* VLam,
     int jblock;
     int i = iblock + threadIdx.x;
     int t = tblock + threadIdx.y;
-    int KT = K*T;
+    int NF = N*F;
     int j, f;
     int thist, thisf;
     int thisi, thisj;
@@ -198,8 +199,28 @@ __global__ void MatMulConv2DWGrad(float* W, float* H, float* V, float* VLam,
         }
         __syncthreads();
         //Step 2: Copy out sections of H
+        //H goes from k, j-T:j+B-1, 0:F
+        if (threadIdx.y < T) {
+            //Copy out [jblock-T-1, jblock] section
+            thisj = jblock - threadIdx.y;
+            thist = T - threadIdx.y - 1;
+            for (f = 0; f < F; f++) {
+                if (thisj < 0) {
+                    x[hoff+thist*F+f] = 0;
+                }
+                else {
+                    x[hoff+thist*F+f] = H[k*NF + thisj*F + f];
+                }
+            }
+        }
+        //Copy out [1, blockdim-1] part
+
+
+        __syncthreads();
 
 
         //Step 3: Do multiplication
+
+        __syncthreads();
     }
 }
