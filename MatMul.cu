@@ -132,7 +132,7 @@ __global__ void MatMulConv2D(float* W, float* H, float* Lam, int M, int N, int K
 
 
 __global__ void MatMulConv2DWGrad(float* W, float* H, float* V, float* VLam, 
-        int M, int N, int K, int T, int F, int FBlocks, int JBlocks) {
+        int M, int N, int K, int T, int F, int FBlocks) {
     /*
     Perform 2D convolutional matrix multiplicative update of W
     :param W: An MxKxT input matrix
@@ -142,7 +142,6 @@ __global__ void MatMulConv2DWGrad(float* W, float* H, float* V, float* VLam,
     :param VLam: The current MxN approximation of V
     :param M, N, K, T, F: Dimensions
     :param FBlocks: Number of blocks of F padding to load in per grid block
-    :param JBlocks: Assuming 1 block of t values
     */
 
     /*Shared Memory Layout in x, which holds chunks of V/VLam and H that are 
@@ -151,6 +150,8 @@ __global__ void MatMulConv2DWGrad(float* W, float* H, float* V, float* VLam,
             2) VLam goes from iblock:iblock+B+F-1, j:j+B-1 at an offset of
                 (B+F)*B
             3) H goes from k, j-T:j+B-1, 0:F at an offset of 2*(B+F)*B
+
+            NOTE: Assuming 1 block of t values
     */
     extern __shared__ float x[]; 
     int vlamoff = (blockDim.x+F)*blockDim.x; //Offset of VLam chunk in shared memory
@@ -169,7 +170,7 @@ __global__ void MatMulConv2DWGrad(float* W, float* H, float* V, float* VLam,
     float denom = 0.0;
 
     //Loop over chunks of the j dimension
-    for (jblock = 0; jblock < JBlocks; jblock += blockDim.x) {
+    for (jblock = 0; jblock < N; jblock += blockDim.x) {
         j = jblock+threadIdx.y;
         //Step 1: Copy out sections of V and VLam
         for (f = 0; f < FBlocks+1; f++) {
@@ -184,28 +185,28 @@ __global__ void MatMulConv2DWGrad(float* W, float* H, float* V, float* VLam,
                 if (thisf >= blockDim.x+F) {
                     continue; //Past F boundary
                 }
-                thisi = i+blockDim.x+f*blockDim.x;
+                thisi = i+(f+1)*blockDim.x;
             }
             //Pull out V[thisi, j] and VLam[thisi, j]
-            if (thisi < 0 || thisi >= M) {
-                x[T*thisf+j] = 0;
-                x[vlamoff+T*thisf+j] = 0;
+            if (thisi < 0 || thisi >= M || j >= N) {
+                x[blockDim.x*thisf+threadIdx.y] = 0;
+                x[vlamoff+blockDim.x*thisf+threadIdx.y] = 0;
             }
             else {
-                x[T*thisf+j] = V[thisi*N+j];
-                x[vlamoff+T*thisf+j] = VLam[thisi*N+j];
+                x[blockDim.x*thisf+threadIdx.y] = V[thisi*N+j];
+                x[vlamoff+blockDim.x*thisf+threadIdx.y] = VLam[thisi*N+j];
             }
 
         }
         __syncthreads();
         //Step 2: Copy out sections of H
         //H goes from k, j-T:j+B-1, 0:F
-        if (threadIdx.y < T) {
-            //Copy out [jblock-T-1, jblock] section
+        /*if (threadIdx.y <= T) {
+            //Copy out [jblock-T, jblock] section
             thisj = jblock - threadIdx.y;
-            thist = T - threadIdx.y - 1;
+            thist = T - threadIdx.y;
             for (f = 0; f < F; f++) {
-                if (thisj < 0) {
+                if (thisj < 0 || thisj >= M) {
                     x[hoff+thist*F+f] = 0;
                 }
                 else {
@@ -214,13 +215,34 @@ __global__ void MatMulConv2DWGrad(float* W, float* H, float* V, float* VLam,
             }
         }
         //Copy out [1, blockdim-1] part
-
-
+        if (threadIdx.y > 0) {
+            thisj = j;
+            thist = T + threadIdx.y;
+            for (f = 0; f < F; f++) {
+                if (thisj >= M) {
+                    x[hoff+thist*F+f] = 0;
+                }
+                else{
+                    x[hoff+thist*F+f] = H[k*NF + thisj*F + f];
+                }
+            }
+        }
         __syncthreads();
+        */
 
 
         //Step 3: Do multiplication
-
+        for (f = 0; f < F; f++) {
+            for (thisj = 0; thisj < blockDim.y; thisj++) {
+                //V[i+f, j] * H[k, j-t, f]
+                //num += x[(threadIdx.x+f)*T+thisj]*x[hoff+(blockDim.y-threadIdx.y+thisj)*F+f];
+                num += x[(threadIdx.x+f)*blockDim.x+thisj];
+            }
+        }
         __syncthreads();
+    }
+    if (i < M && t < T) {
+        //W[i, k, t]
+        W[i*K*T + k*T + t] = num;
     }
 }

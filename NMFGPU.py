@@ -78,6 +78,26 @@ def multiplyConv2DDebug(W, H):
             Lam += Wt.dot(Hf)
     return Lam
 
+def multiplyConv2DWGradDebug(W, H, V, VLam):
+    """
+    Compute the 2D convolutional multiplicative update
+    for W
+    :param W: A NxKxT matrix of K sources over spatiotemporal spans NxT\
+    :param H: A KxMxF matrix of source activations for each submatrix of W\
+            over F transpositions over M time
+    """
+    WNums = np.zeros(W.shape) #Numerator
+    WDenoms = np.zeros(W.shape) #Denomenator
+    thisH = np.ones((H.shape[0], H.shape[1]))
+    for f in range(H.shape[2]):
+        thisV = shiftMatLRUD(V, di=-f)
+        thisVLam = shiftMatLRUD(VLam, di=-f)
+        for t in range(W.shape[2]):
+            #thisH = shiftMatLRUD(H[:, :, f], dj=t)
+            WNums[:, :, t] += thisV.dot(thisH.T)
+            WDenoms[:, :, t] += thisVLam.dot(thisH.T)
+    return WNums
+
 def testNMF2DMultiplyGPU():
     initParallelAlgorithms()
     np.random.seed(100)
@@ -87,8 +107,8 @@ def testNMF2DMultiplyGPU():
     T = 40
     F = 40
     N = 1000
-    W = np.random.randn(M, K, T)
-    H = np.random.randn(K, N, F)
+    W = np.random.rand(M, K, T)
+    H = np.random.rand(K, N, F)
 
     sharedmem = 4*((F+blockdim)*T+(T+blockdim)*F)
     print("Shared Memory: %g kB"%(sharedmem/1024.0))
@@ -143,17 +163,16 @@ def testNMF2DWGradientGPU():
     T = 20
     F = 40
     N = 2000
-    V = np.random.randn(M, N)
-    W = np.random.randn(M, K, T)
-    H = np.random.randn(K, N, F)
+    V = np.random.rand(M, N)
+    W = np.random.rand(M, K, T)
+    H = np.random.rand(K, N, F)
     VLam = multiplyConv2D(W, H)
 
     sharedmem = 4*((blockdim+F)*blockdim*2+(T+blockdim)*F)
     print("Shared Memory: %g kB"%(sharedmem/1024.0))
 
     tic = time.time()
-    Fac = multiplyConv2DWGrad(W, H, V, VLam)
-    WNextGT = Fac*W
+    WNumsGT = multiplyConv2DWGradDebug(W, H, V, VLam)
     cputime = time.time()-tic
     print("Elapsed Time CPU: %.3g"%cputime)
 
@@ -179,17 +198,18 @@ def testNMF2DWGradientGPU():
     GridDimT = int(np.ceil(1.0*T/blockdim))
     print("FBlocks = %i, JBlocks = %i"%(FBlocks, JBlocks))
     MatMulConv2DWGrad_(WGPU, HGPU, VGPU, VLamGPU, M, N, K, T, F, \
-        FBlocks, JBlocks, block=(blockdim, blockdim, 1), \
+        FBlocks, block=(blockdim, blockdim, 1), \
         grid=(GridDimM, int(K), GridDimT), shared=sharedmem )
     
-    WNext = WGPU.get()
+    H2 = HGPU.get()
+    WNums = WGPU.get()
     gputime = time.time()-tic
     print("Elapsed Time GPU: %.3g"%gputime)
     print("Speedup Ratio: %.3g"%(cputime/gputime))
-    #plt.figure(figsize=(16, 4))
-    #plot3Diff(WNextGT, WNext)
-    #plt.show()
+    plt.figure(figsize=(16, 4))
+    plot3Diff(WNumsGT[:, 0, :], WNums[:, 0, :])
+    plt.show()
 
 if __name__ == '__main__':
-    testNMF2DMultiplyGPU()
-    #testNMF2DWGradientGPU()
+    #testNMF2DMultiplyGPU()
+    testNMF2DWGradientGPU()
