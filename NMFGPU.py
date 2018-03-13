@@ -2,6 +2,8 @@ import pycuda.autoinit
 import pycuda.driver as drv
 import pycuda.gpuarray as gpuarray
 import pycuda.cumath
+import skcuda.misc
+import skcuda.linalg as linalg
 from pycuda.compiler import SourceModule
 import numpy as np
 import matplotlib.pyplot as plt
@@ -18,7 +20,6 @@ def getResourceString(filename):
 
 MatMulNaive_ = None
 MatMulConv2D_ = None
-MatMulConv2DWGrad_ = None
 
 def initParallelAlgorithms():
     """
@@ -26,12 +27,11 @@ def initParallelAlgorithms():
     """
     global MatMulNaive_
     global MatMulConv2D_
-    global MatMulConv2DWGrad_
     s = getResourceString("MatMul.cu")
     mod = SourceModule(s)
     MatMulNaive_ = mod.get_function("MatMulNaive")
     MatMulConv2D_ = mod.get_function("MatMulConv2D")
-    MatMulConv2DWGrad_ = mod.get_function("MatMulConv2DWGrad")
+    linalg.init()
 
 def plot3Diff(A, B, eps = None):
     """
@@ -61,23 +61,6 @@ def plot3Diff(A, B, eps = None):
     plt.title("Diff")
     plt.colorbar()
 
-def multiplyConv2DDebug(W, H):
-    """
-    Perform a convolutive matrix multiplication in time and frequency
-    Debugging Version: Change this to only look at W or H at a time
-    """
-    Lam = np.zeros((W.shape[0], H.shape[1]), dtype=W.dtype)
-    #Hf = np.ones((H.shape[0], H.shape[1]))
-    Wt = np.ones((W.shape[0], W.shape[1]))
-    for t in range(W.shape[2]):
-        for f in range(H.shape[2]):
-            #Wt = np.array(W[:, :, t])
-            #Wt = shiftMatLRUD(Wt, di=f)
-            Hf = np.array(H[:, :, f])
-            Hf = shiftMatLRUD(Hf, dj=t)
-            Lam += Wt.dot(Hf)
-    return Lam
-
 def multiplyConv2DWGradDebug(W, H, V, VLam):
     """
     Compute the 2D convolutional multiplicative update
@@ -88,15 +71,32 @@ def multiplyConv2DWGradDebug(W, H, V, VLam):
     """
     WNums = np.zeros(W.shape) #Numerator
     WDenoms = np.zeros(W.shape) #Denomenator
-    thisH = np.ones((H.shape[0], H.shape[1]))
-    for f in range(H.shape[2]):
+    for f in range(H.shape[0]):
         thisV = shiftMatLRUD(V, di=-f)
         thisVLam = shiftMatLRUD(VLam, di=-f)
-        for t in range(W.shape[2]):
-            #thisH = shiftMatLRUD(H[:, :, f], dj=t)
-            WNums[:, :, t] += thisV.dot(thisH.T)
-            WDenoms[:, :, t] += thisVLam.dot(thisH.T)
+        for t in range(W.shape[0]):
+            thisH = shiftMatLRUD(H[f, :, :], dj=t)
+            WNums[t, :, :] += thisV.dot(thisH.T)
+            #WDenoms[t, :, :] += thisVLam.dot(thisH.T)
     return WNums
+
+def multiplyConv2DWGradGPU(W, H, V, VLam):
+    thisV = V.copy()
+    thisVLam = VLam.copy()
+    thisH = H.copy()    
+    WNums = gpuarray.zeros(W.shape, np.float32)
+    WDenoms = gpuarray.zeros(W.shape, np.float32)
+    for f in range(H.shape[0]):
+        if f > 0:
+            thisV[0:-f, :] = V[f::, :]
+            thisV[-f::, :] = gpuarray.zeros((f, V.shape[1]), np.float32)
+        for t in range(W.shape[0]):
+            if t > 0:
+                thisH[f, :, t::] = H[f, :, 0:-t]
+                thisH[f, :, 0:t] = gpuarray.zeros((H.shape[1], t), np.float32)
+            linalg.add_dot(thisV, thisH[f, :, :], WNums[t, :, :], transb='T')
+    return WNums
+
 
 def testNMF2DMultiplyGPU():
     initParallelAlgorithms()
@@ -104,11 +104,11 @@ def testNMF2DMultiplyGPU():
     blockdim = 32
     M = 1025
     K = 10
-    T = 40
+    T = 12
     F = 40
     N = 1000
-    W = np.random.rand(M, K, T)
-    H = np.random.rand(K, N, F)
+    W = np.random.rand(T, M, K)
+    H = np.random.rand(F, K, N)
 
     sharedmem = 4*((F+blockdim)*T+(T+blockdim)*F)
     print("Shared Memory: %g kB"%(sharedmem/1024.0))
@@ -158,14 +158,14 @@ def testNMF2DWGradientGPU():
     initParallelAlgorithms()
     np.random.seed(100)
     blockdim = 32
-    M = 1025
+    M = 300
     K = 10
     T = 20
     F = 40
-    N = 2000
+    N = 1000
     V = np.random.rand(M, N)
-    W = np.random.rand(M, K, T)
-    H = np.random.rand(K, N, F)
+    W = np.random.rand(T, M, K)
+    H = np.random.rand(F, K, N)
     VLam = multiplyConv2D(W, H)
 
     sharedmem = 4*((blockdim+F)*blockdim*2+(T+blockdim)*F)
@@ -182,34 +182,17 @@ def testNMF2DWGradientGPU():
     VGPU = gpuarray.to_gpu(np.array(V, dtype=np.float32))
     VLamGPU = gpuarray.to_gpu(np.array(VLam, dtype=np.float32))
 
-    #Figure out how to loop when copying over memory
-    FBlockRound = blockdim*np.ceil(F/float(blockdim))
-    JBlocksRound = blockdim*np.ceil(N/float(blockdim))
-    FBlocks = np.array(FBlockRound/blockdim, dtype=np.int32)
-    JBlocks = np.array(JBlocksRound/blockdim, dtype=np.int32)
-
-    M = np.array(M, dtype=np.int32)
-    N = np.array(N, dtype=np.int32)
-    K = np.array(K, dtype=np.int32)
-    T = np.array(T, dtype=np.int32)
-    F = np.array(F, dtype=np.int32)
-    
-    GridDimM = int(np.ceil(1.0*M/blockdim))
-    GridDimT = int(np.ceil(1.0*T/blockdim))
-    print("FBlocks = %i, JBlocks = %i"%(FBlocks, JBlocks))
-    MatMulConv2DWGrad_(WGPU, HGPU, VGPU, VLamGPU, M, N, K, T, F, \
-        FBlocks, block=(blockdim, blockdim, 1), \
-        grid=(GridDimM, int(K), GridDimT), shared=sharedmem )
-    
-    H2 = HGPU.get()
-    WNums = WGPU.get()
+    WNums = multiplyConv2DWGradGPU(WGPU, HGPU, VGPU, VLamGPU)
+    WNums = WNums.get()
+    #WNums = multiplyConv2DWGradDebug2(W, H, V, VLam)
     gputime = time.time()-tic
     print("Elapsed Time GPU: %.3g"%gputime)
     print("Speedup Ratio: %.3g"%(cputime/gputime))
     plt.figure(figsize=(16, 4))
-    plot3Diff(WNumsGT[:, 0, :], WNums[:, 0, :])
+    plot3Diff(WNumsGT[:, :, 0], WNums[:, :, 0])
     plt.show()
 
+
 if __name__ == '__main__':
-    #testNMF2DMultiplyGPU()
-    testNMF2DWGradientGPU()
+    testNMF2DMultiplyGPU()
+    #testNMF2DWGradientGPU()

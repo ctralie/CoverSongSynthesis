@@ -67,24 +67,24 @@ def testNMF2DConvJointSynthetic():
     M = 20
     N1 = 60
     N2 = 40
-    W1 = np.zeros((M, K, T))
-    W2 = np.zeros((M, K, T))
+    W1 = np.zeros((T, M, K))
+    W2 = np.zeros((T, M, K))
     #Pattern 1: A tall block in A that goes to a fat block in A'
     [J, I] = np.meshgrid(np.arange(2), 4+np.arange(5))
-    W1[I.flatten(), 0, J.flatten()] = 1
+    W1[J.flatten(), I.flatten(), 0] = 1
     [J, I] = np.meshgrid(np.arange(5), 7+np.arange(2))
-    W2[I.flatten(), 0, J.flatten()] = 1
+    W2[J.flatten(), I.flatten(), 0] = 1
     #Pattern 2: An antidiagonal line in A that goes to a diagonal line in A'
-    W1[9-np.arange(7), 1, np.arange(7)] = 1
-    W2[np.arange(7), 1, np.arange(7)] = 1
+    W1[np.arange(7), 9-np.arange(7), 1] = 1
+    W2[np.arange(7), np.arange(7), 1] = 1
     #Pattern 3: A square in A that goes into a circle in A'
     [J, I] = np.meshgrid(np.arange(5), 10+np.arange(5))
     I = I.flatten()
     J = J.flatten()
-    W1[np.arange(10), 2, 0] = 1
-    W1[np.arange(10), 2, 9] = 1
-    W1[0, 2, np.arange(10)] = 1
-    W1[10, 2, np.arange(10)] = 1
+    W1[0, np.arange(10), 2] = 1
+    W1[9, np.arange(10), 2] = 1
+    W1[np.arange(10), 0, 2] = 1
+    W1[np.arange(10), 10, 2] = 1
     [J, I] = np.meshgrid(np.arange(T), np.arange(T))
     I = I.flatten()
     J = J.flatten()
@@ -92,24 +92,24 @@ def testNMF2DConvJointSynthetic():
     idx = idx[np.abs((I-5)**2 + (J-5)**2 - 4**2) < 4]
     I = I[idx]
     J = J[idx]
-    W2[I, 2, J] = 1
+    W2[J, I, 2] = 1
 
-    H1 = np.zeros((K, N1, F))
-    H1[0, [3, 15, 50], 9] = 1
-    H1[0, 27, 0] = 1
+    H1 = np.zeros((F, K, N1))
+    H1[9, 0, [3, 15, 50]] = 1
+    H1[0, 0, 27] = 1
     
     #3 diagonal lines in a row, then a gap, then 3 in a row pitch shifted
-    H1[1, [5, 15, 25], 0] = 1
-    H1[1, [35, 45, 55], 5] = 1
+    H1[0, 1, [5, 15, 25]] = 1
+    H1[0, 1, [35, 45, 55]] = 1
 
     #Squares and circles moving down then up
-    H1[2, [0, 48], 1] = 1
-    H1[2, [12, 36], 4] = 1
-    H1[2, 24, 8] = 1
+    H1[1, 2, [0, 48]] = 1
+    H1[4, 2, [12, 36]] = 1
+    H1[8, 2, 24] = 1
 
 
-    H2 = np.random.rand(K, N2, F)
-    H2[H2 > 0.98] = 1
+    H2 = np.random.rand(F, K, N2)
+    H2[H2 > 0.9] = 1
     H2[H2 < 1] = 0
 
     A = multiplyConv2D(W1, H1)
@@ -255,7 +255,7 @@ def testNMF2DMusic():
 
     #Also invert each Wt
     for k in range(W.shape[1]):
-        y_hat = griffinLimCQTInverse(W[:, k, :], Fs, hopSize, bins_per_octave, NIters=10)
+        y_hat = griffinLimCQTInverse(W[:, :, k].T, Fs, hopSize, bins_per_octave, NIters=10)
         y_hat = y_hat/np.max(np.abs(y_hat))
         sio.wavfile.write("smoothcriminalW%i.wav"%k, Fs, y_hat)
 
@@ -289,8 +289,8 @@ def testNMF1DMusic():
     sio.wavfile.write("smoothcriminalNMFAAF.wav", Fs, y_hat)
 
     #Also invert each Wt
-    for k in range(W.shape[1]):
-        Wk = np.array(W[:, k, :])
+    for k in range(W.shape[2]):
+        Wk = np.array(W[:, :, k].T)
         Wk1 = Wk[0:N, :]
         Wk2 = Wk[N::, :]
         y_hat = griffinLimInverse(Wk1, winSize, hopSize)
@@ -328,7 +328,7 @@ def testNMF1DTranslate():
     plotfnjoint = lambda V, W, H, iter, errs: \
         plotNMF1DConvSpectraJoint(V, W, H, iter, errs, hopLength = hopSize, \
         audioParams = {'Fs':Fs, 'winSize':winSize, 'prefix':"Shift%i"%shift})
-    """
+
     W1 = np.array([])
     W2 = np.array([])
     Ss1 = []
@@ -341,14 +341,14 @@ def testNMF1DTranslate():
         N = SA.shape[0]
         S = np.concatenate((np.abs(SA), np.abs(SAp)), 0)
         (W, H) = doNMF1DConv(S, K, T, NIters, plotfn=plotfnjoint, joint=True, prefix="Shift%i"%shift)
-        W1i = W[0:N, :, :]
-        W2i = W[N::, :, :]
+        W1i = W[:, 0:N, :]
+        W2i = W[:, N::, :]
         if W1.size == 0:
             W1 = W1i
             W2 = W2i
         else:
-            W1 = np.concatenate((W1, W1i), 1)
-            W2 = np.concatenate((W2, W2i), 1)
+            W1 = np.concatenate((W1, W1i), 2)
+            W2 = np.concatenate((W2, W2i), 2)
         (Ss1i, Ratios1) = getComplexNMF1DTemplates(SA, W1i, H, p = 2, audioParams = {'winSize':winSize, \
             'hopSize':hopSize, 'Fs':Fs, 'fileprefix':'Shift%iNMF1DJointIter%i/A'%(shift, NIters)})
         Ss1 += Ss1i
@@ -358,6 +358,7 @@ def testNMF1DTranslate():
         print("Elapsed Time: %.3g"%(time.time()-tic))
         sio.savemat("Ws1DJoint.mat", {"W1":W1, "W2":W2})
         sio.savemat("Ss.mat", {"Ss1":Ss1, "Ss2":Ss2})
+
     """
     res = sio.loadmat("Ws1DJoint.mat")
     W1 = res['W1']
@@ -365,6 +366,7 @@ def testNMF1DTranslate():
     res = sio.loadmat("Ss.mat")
     Ss1 = res['Ss1']
     Ss2 = res['Ss2']
+    """
 
     #Step 3: Represent song B in dictionary W1
     if not os.path.exists("NMF1DB"):
@@ -494,9 +496,9 @@ if __name__ == '__main__':
     #testNMFJointSynthetic()
     #testNMFJointSmoothCriminal()
     #testNMF1DConvSynthetic()
-    testNMF2DConvSynthetic()
+    #testNMF2DConvSynthetic()
     #testNMF1DMusic()
     #testNMF2DMusic()
-    #testNMF1DTranslate()
+    testNMF1DTranslate()
     #testNMF2DConvJointSynthetic()
     #testNMF2DJointMusic()

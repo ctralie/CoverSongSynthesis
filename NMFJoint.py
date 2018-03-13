@@ -217,10 +217,10 @@ def doNMF2DConvJoint(A, Ap, B, K, T, F, L, plotfn = None, prefix = ""):
     M = A.shape[0]
     N1 = A.shape[1]
     N2 = B.shape[1]
-    W1 = np.random.rand(M, K, T)
-    W2 = np.random.rand(M, K, T)
-    H1 = np.random.rand(K, N1, F)
-    H2 = np.random.rand(K, N2, F)    
+    W1 = np.random.rand(T, M, K)
+    W2 = np.random.rand(T, M, K)
+    H1 = np.random.rand(F, K, N1)
+    H2 = np.random.rand(F, K, N2)    
 
     errs = [getJointEuclideanError(A, Ap, B, W1, W2, H1, H2)]
     if plotfn:
@@ -249,12 +249,12 @@ def doNMF2DConvJoint(A, Ap, B, K, T, F, L, plotfn = None, prefix = ""):
             thisLam12 = shiftMatLRUD(Lam12, di=-f)
             thisLam21 = shiftMatLRUD(Lam21, di=-f)
             for t in range(T):
-                thisH1T = (shiftMatLRUD(H1[:, :, f], dj=t)).T
-                thisH2T = (shiftMatLRUD(H2[:, :, f], dj=t)).T
-                W1Nums[:, :, t] += thisA.dot(thisH1T) + thisB.dot(thisH2T)
-                W1Denoms[:, :, t] += thisLam11.dot(thisH1T) + thisLam12.dot(thisH2T)
-                W2Nums[:, :, t] += thisAp.dot(thisH1T)
-                W2Denoms[:, :, t] += thisLam21.dot(thisH1T)
+                thisH1T = (shiftMatLRUD(H1[f, :, :], dj=t)).T
+                thisH2T = (shiftMatLRUD(H2[f, :, :], dj=t)).T
+                W1Nums[t, :, :] += thisA.dot(thisH1T) + thisB.dot(thisH2T)
+                W1Denoms[t, :, :] += thisLam11.dot(thisH1T) + thisLam12.dot(thisH2T)
+                W2Nums[t, :, :] += thisAp.dot(thisH1T)
+                W2Denoms[t, :, :] += thisLam21.dot(thisH1T)
             print("Elapsed Time Ws Phi=%i: %.3g"%(f, time.time()-tic))
         W1 = W1*(W1Nums/W1Denoms)
         W2 = W2*(W2Nums/W2Denoms)
@@ -278,12 +278,12 @@ def doNMF2DConvJoint(A, Ap, B, K, T, F, L, plotfn = None, prefix = ""):
             thisLam12 = shiftMatLRUD(Lam12, dj=-t)
             thisLam21 = shiftMatLRUD(Lam21, dj=-t)
             for f in range(F):
-                thisW1T = (shiftMatLRUD(W1[:, :, t], di=f)).T
-                thisW2T = (shiftMatLRUD(W2[:, :, t], di=f)).T
-                H1Nums[:, :, f] += thisW1T.dot(thisA) + thisW2T.dot(thisAp)
-                H1Denoms[:, :, f] += thisW1T.dot(thisLam11) + thisW2T.dot(thisLam21)
-                H2Nums[:, :, f] += thisW1T.dot(thisB)
-                H2Denoms[:, :, f] += thisW1T.dot(thisLam12)
+                thisW1T = (shiftMatLRUD(W1[t, :, :], di=f)).T
+                thisW2T = (shiftMatLRUD(W2[t, :, :], di=f)).T
+                H1Nums[f, :, :] += thisW1T.dot(thisA) + thisW2T.dot(thisAp)
+                H1Denoms[f, :, :] += thisW1T.dot(thisLam11) + thisW2T.dot(thisLam21)
+                H2Nums[f, :, :] += thisW1T.dot(thisB)
+                H2Denoms[f, :, :] += thisW1T.dot(thisLam12)
             print("Elapsed time H t=%i, %.3g"%(t, time.time() - tic))
         H1 = H1*(H1Nums/H1Denoms)
         H2 = H2*(H2Nums/H2Denoms)
@@ -304,10 +304,10 @@ def plotNMF2DConvJointSpectra(A, Ap, B, W1, W2, H1, H2, iter, errs, \
     :param A: An M x N1 matrix for song A
     :param Ap: An M x N1 matrix for song A'
     :param B: An M x N2 matrix for song B
-    :param W1: An M x K x T source/corpus matrix for songs A and B
-    :param W2: An M x K x T source/corpus matrix for song A'
-    :param H1: A K x N1 x F matrix of activations for A and A'
-    :param H2: A K x N2 x F matrix of activations for B
+    :param W1: An T x M x K source/corpus matrix for songs A and B
+    :param W2: An T x M x K source/corpus matrix for song A'
+    :param H1: An F x K x N1 matrix of activations for A and A'
+    :param H2: An F x K x N2 matrix of activations for B
     :param iter: The iteration number
     :param errs: Errors over time
     :param hopLength: The hop length (for plotting)
@@ -315,7 +315,7 @@ def plotNMF2DConvJointSpectra(A, Ap, B, W1, W2, H1, H2, iter, errs, \
     """
     import librosa
     import librosa.display
-    K = W1.shape[1]
+    K = W1.shape[2]
     if not plotElems:
         K = 0
 
@@ -334,19 +334,19 @@ def plotNMF2DConvJointSpectra(A, Ap, B, W1, W2, H1, H2, iter, errs, \
         if 'winSize' in audioParams:
             winSize = audioParams['winSize']
         #Invert each Wt
-        for k in range(W1.shape[1]):
+        for k in range(W1.shape[2]):
             if bins_per_octave > -1:
-                y_hat = griffinLimCQTInverse(W1[:, k, :], Fs, hopLength, bins_per_octave, NIters=10)
+                y_hat = griffinLimCQTInverse(W1[:, :, k].T, Fs, hopLength, bins_per_octave, NIters=10)
                 y_hat = y_hat/np.max(np.abs(y_hat))
                 sio.wavfile.write("%s/W1_%i.wav"%(pre, k), Fs, y_hat)
-                y_hat = griffinLimCQTInverse(W2[:, k, :], Fs, hopLength, bins_per_octave, NIters=10)
+                y_hat = griffinLimCQTInverse(W2[:, :, k].T, Fs, hopLength, bins_per_octave, NIters=10)
                 y_hat = y_hat/np.max(np.abs(y_hat))
                 sio.wavfile.write("%s/W2_%i.wav"%(pre, k), Fs, y_hat)
             else:
-                y_hat = griffinLimInverse(W1[:, k, :], winSize, hopLength)
+                y_hat = griffinLimInverse(W1[:, :, k].T, winSize, hopLength)
                 y_hat = y_hat/np.max(np.abs(y_hat))
                 sio.wavfile.write("%s/W1_%i.wav"%(pre, k), Fs, y_hat)
-                y_hat = griffinLimInverse(W2[:, k, :], winSize, hopLength)
+                y_hat = griffinLimInverse(W2[:, :, k].T, winSize, hopLength)
                 y_hat = y_hat/np.max(np.abs(y_hat))
                 sio.wavfile.write("%s/W2_%i.wav"%(pre, k), Fs, y_hat)
 
@@ -397,32 +397,32 @@ def plotNMF2DConvJointSpectra(A, Ap, B, W1, W2, H1, H2, iter, errs, \
     for k in range(K):
         plt.subplot(2, 8+2*K, 4+k+1)
         if hopLength > -1:
-            librosa.display.specshow(librosa.amplitude_to_db(W1[:, k, :]), \
+            librosa.display.specshow(librosa.amplitude_to_db(W1[:, :, k].T), \
                 hop_length=hopLength, y_axis='log', x_axis='time')
         else:
-            plt.imshow(W1[:, k, :], cmap = 'afmhot', \
+            plt.imshow(W1[:, :, k].T, cmap = 'afmhot', \
                     interpolation = 'nearest', aspect = 'auto')  
             plt.colorbar()
         plt.title("W1%i"%k)
 
         plt.subplot(2, 8+2*K, 8+2*K+4+k+1)
         if hopLength > -1:
-            librosa.display.specshow(librosa.amplitude_to_db(W2[:, k, :]), \
+            librosa.display.specshow(librosa.amplitude_to_db(W2[:, :, k].T), \
                 hop_length=hopLength, y_axis='log', x_axis='time')
         else:
-            plt.imshow(W2[:, k, :], cmap = 'afmhot', \
+            plt.imshow(W2[:, :, k].T, cmap = 'afmhot', \
                     interpolation = 'nearest', aspect = 'auto')  
             plt.colorbar()
         plt.title("W2%i"%k)
 
         plt.subplot(2, 8+2*K, K+4+k+1)
-        plt.imshow(H1[k, :, :].T, cmap = 'afmhot', \
+        plt.imshow(H1[:, k, :], cmap = 'afmhot', \
             interpolation = 'nearest', aspect = 'auto')
         plt.colorbar()
         plt.title("H1%i"%k)
 
         plt.subplot(2, 8+2*K, 8+2*K+4+K+k+1)
-        plt.imshow(H2[k, :, :].T, cmap = 'afmhot', \
+        plt.imshow(H2[:, k, :].T, cmap = 'afmhot', \
             interpolation = 'nearest', aspect = 'auto')
         plt.colorbar()
         plt.title("H2%i"%k)

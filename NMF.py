@@ -182,23 +182,23 @@ def shiftMatLRUD(X, di=0, dj=0):
     
 def multiplyConv1D(W, H):
     """
-    Perform a convolutive matrix multiplication in time
+    Perform a convolutional matrix multiplication in time
     """
-    Lam = np.zeros((W.shape[0], H.shape[1]), dtype=W.dtype)
-    for t in range(W.shape[2]):
-        Lam += W[:, :, t].dot(shiftMatLRUD(H, dj=t))
+    Lam = np.zeros((W.shape[1], H.shape[1]), dtype=W.dtype)
+    for t in range(W.shape[0]):
+        Lam += W[t, :, :].dot(shiftMatLRUD(H, dj=t))
     return Lam
 
 def multiplyConv2D(W, H):
     """
-    Perform a convolutive matrix multiplication in time and frequency
+    Perform a convolutional matrix multiplication in time and frequency
     """
-    Lam = np.zeros((W.shape[0], H.shape[1]), dtype=W.dtype)
-    for t in range(W.shape[2]):
-        for f in range(H.shape[2]):
-            Wt = np.array(W[:, :, t])
+    Lam = np.zeros((W.shape[1], H.shape[2]), dtype=W.dtype)
+    for t in range(W.shape[0]):
+        for f in range(H.shape[0]):
+            Wt = np.array(W[t, :, :])
             Wt = shiftMatLRUD(Wt, di=f)
-            Hf = np.array(H[:, :, f])
+            Hf = np.array(H[f, :, :])
             Hf = shiftMatLRUD(Hf, dj=t)
             Lam += Wt.dot(Hf)
     return Lam
@@ -213,13 +213,13 @@ def multiplyConv2DWGrad(W, H, V, VLam):
     """
     WNums = np.zeros(W.shape) #Numerator
     WDenoms = np.zeros(W.shape) #Denomenator
-    for f in range(H.shape[2]):
+    for f in range(H.shape[0]):
         thisV = shiftMatLRUD(V, di=-f)
         thisVLam = shiftMatLRUD(VLam, di=-f)
-        for t in range(W.shape[2]):
-            thisH = shiftMatLRUD(H[:, :, f], dj=t)
-            WNums[:, :, t] += thisV.dot(thisH.T)
-            WDenoms[:, :, t] += thisVLam.dot(thisH.T)
+        for t in range(W.shape[0]):
+            thisH = shiftMatLRUD(H[f, :, :], dj=t)
+            WNums[t, :, :] += thisV.dot(thisH.T)
+            WDenoms[t, :, :] += thisVLam.dot(thisH.T)
     return WNums/WDenoms
 
 def doNMF1DConv(V, K, T, L, r = 0, p = -1, W = np.array([]), plotfn = None, plotComponents = True, \
@@ -241,7 +241,7 @@ def doNMF1DConv(V, K, T, L, r = 0, p = -1, W = np.array([]), plotfn = None, plot
         on top of each other.  Functionality is the same, but errors are computed\
         separately, and plotting is done differently
     :returns (W, H): \
-        W is an NxKxT matrix of K sources over spatiotemporal spans NxT
+        W is an TxNxK matrix of K sources over spatiotemporal spans NxT
         H is a KxM matrix of source activations for each column of V
     """
     import scipy.ndimage
@@ -249,7 +249,7 @@ def doNMF1DConv(V, K, T, L, r = 0, p = -1, W = np.array([]), plotfn = None, plot
     M = V.shape[1]
     WFixed = False
     if W.size == 0:
-        W = np.random.rand(N, K, T)
+        W = np.random.rand(T, N, K)
     else:
         WFixed = True
         K = W.shape[1]
@@ -295,7 +295,7 @@ def doNMF1DConv(V, K, T, L, r = 0, p = -1, W = np.array([]), plotfn = None, plot
         HNum = np.zeros(H.shape)
         HDenom = np.zeros((H.shape[0], 1))
         for t in range(T):
-            thisW = W[:, :, t]
+            thisW = W[t, :, :]
             HDenom += np.sum(thisW, 0)[:, None]
             HNum += (thisW.T).dot(shiftMatLRUD(VLam, dj=-t))
         H = H*(HNum/HDenom)
@@ -307,7 +307,7 @@ def doNMF1DConv(V, K, T, L, r = 0, p = -1, W = np.array([]), plotfn = None, plot
                 HShift = shiftMatLRUD(H, dj=t)
                 denom = np.sum(H, 1)[None, :]
                 denom[denom == 0] = 1
-                W[:, :, t] *= (VLam.dot(HShift.T))/denom
+                W[t, :, :] *= (VLam.dot(HShift.T))/denom
         WH = multiplyConv1D(W, H)
         if joint:
             N1 = int(N/2)
@@ -330,16 +330,13 @@ def getComplexNMF1DTemplates(S, W, H, p = 2, audioParams = None):
     Given a complex spectrogram and a factorization WH ~= |S| of its magnitude
     spectrum, separate out the complex spectrogram into each of its components
     :param S: An MxN complex spectrogram
-    :param W: An MxKxT matrix of K sources over frequencytemporal spans MxT
+    :param W: An TxMxK matrix of K sources over frequencytemporal spans MxT
     :param H: A KxN matrix of source activations for each column of |S|
     :param p: Power for Weiner filter in soft mask matrices
     :param audioParams: {'winSize':int, 'hopSize':int, 'Fs':int, 'fileprefix':string}\
         If specified, save each component to disk as a wav file
     """
-    N = S.shape[1]
-    M = W.shape[0]
-    K = W.shape[1]
-    T = W.shape[2]
+    K = W.shape[2]
     #Step 1: Compute the masked matrices raised to the power p
     AsSum = np.zeros(S.shape)
     As = []
@@ -393,18 +390,18 @@ def doNMF2DConv(V, K, T, F, L, W = np.array([]), plotfn = None):
     :param plotfn: A function used to plot each iteration, which should\
         take the arguments (V, W, H, iter)
     :returns (W, H): \
-        W is an NxKxT matrix of K sources over spatiotemporal spans NxT\
-        H is a KxMxF matrix of source activations for each submatrix of W\
+        W is an TxNxK matrix of K sources over spatiotemporal spans NxT\
+        H is a FxKxM matrix of source activations for each submatrix of W\
             over F transpositions over M time
     """
     N = V.shape[0]
     M = V.shape[1]
     WFixed = False
     if W.size == 0:
-        W = np.random.rand(N, K, T)
+        W = np.random.rand(T, N, K)
     else:
         WFixed = True
-    H = np.random.rand(K, M, F)
+    H = np.random.rand(F, K, M)
     errs = [getEuclideanError(V, multiplyConv2D(W, H))]
     if plotfn:
         res=4
@@ -420,10 +417,10 @@ def doNMF2DConv(V, K, T, F, L, W = np.array([]), plotfn = None):
 
         #Step 2: Update Hs
         VLam = multiplyConv2D(W, H)
-        HT = np.swapaxes(H, 0, 1)
-        WT = np.swapaxes(W, 0, 1)
+        HT = np.swapaxes(H, 1, 2)
+        WT = np.swapaxes(W, 1, 2)
         Fac = multiplyConv2DWGrad(HT, WT, V.T, VLam.T)
-        H = H*np.swapaxes(Fac, 0, 1)
+        H = H*np.swapaxes(Fac, 1, 2)
 
         errs.append(getEuclideanError(V, multiplyConv2D(W, H)))
         if plotfn and ((l+1) == L or (l+1)%40 == 0):
@@ -436,7 +433,7 @@ def plotNMF1DConvSpectra(V, W, H, iter, errs, hopLength = -1, plotComponents = T
     """
     Plot NMF iterations on a log scale, showing V, H, and W*H
     :param V: An N x M target
-    :param W: An N x K x T source/corpus matrix
+    :param W: An T x N x K source/corpus matrix
     :returns H: A KxM matrix of source activations for each column of V
     :param iter: The iteration number
     :param errs: Errors over time
@@ -444,7 +441,7 @@ def plotNMF1DConvSpectra(V, W, H, iter, errs, hopLength = -1, plotComponents = T
     """
     import librosa
     import librosa.display
-    K = W.shape[1]
+    K = W.shape[2]
     if not plotComponents:
         K = 0
     plt.subplot(1, 4+K, 1)
@@ -463,10 +460,10 @@ def plotNMF1DConvSpectra(V, W, H, iter, errs, hopLength = -1, plotComponents = T
         for k in range(K):
             plt.subplot(1, 4+K, 3+k)
             if hopLength > -1:
-                librosa.display.specshow(librosa.amplitude_to_db(W[:, k, :]), \
+                librosa.display.specshow(librosa.amplitude_to_db(W[:, :, k].T), \
                     hop_length=hopLength, y_axis='log', x_axis='time')
             else:
-                plt.imshow(W[:, k, :], cmap = 'afmhot', \
+                plt.imshow(W[:, :, k].T, cmap = 'afmhot', \
                         interpolation = 'nearest', aspect = 'auto')  
                 plt.colorbar()
             plt.title("W%i"%k)
@@ -492,7 +489,7 @@ def plotNMF1DConvSpectraJoint(V, W, H, iter, errs, hopLength = -1, plotComponent
     Plot NMF iterations on a log scale, showing V, H, and W*H, with the understanding
     that V and W are two songs concatenated on top of each other
     :param V: An N x M target
-    :param W: An N x K x T source/corpus matrix
+    :param W: An T x N x K source/corpus matrix
     :returns H: A KxM matrix of source activations for each column of V
     :param iter: The iteration number
     :param errs: Errors over time
@@ -500,13 +497,13 @@ def plotNMF1DConvSpectraJoint(V, W, H, iter, errs, hopLength = -1, plotComponent
     """
     import librosa
     import librosa.display
-    K = W.shape[1]
+    K = W.shape[2]
     if not plotComponents:
         K = 0
 
-    N = int(W.shape[0]/2)
-    W1 = W[0:N, :, :]
-    W2 = W[N::, :, :]
+    N = int(W.shape[1]/2)
+    W1 = W[:, 0:N, :]
+    W2 = W[:, N::, :]
     V1 = V[0:N, :]
     V2 = V[N::, :]
     WH = multiplyConv1D(W, H)
@@ -521,11 +518,11 @@ def plotNMF1DConvSpectraJoint(V, W, H, iter, errs, hopLength = -1, plotComponent
         if not os.path.exists(pre):
             os.mkdir(pre)
         #Invert each Wt
-        for k in range(W1.shape[1]):
-            y_hat = griffinLimInverse(W1[:, k, :], winSize, hopLength)
+        for k in range(W1.shape[2]):
+            y_hat = griffinLimInverse(W1[:, :, k].T, winSize, hopLength)
             y_hat = y_hat/np.max(np.abs(y_hat))
             wavfile.write("%s/W1_%i.wav"%(pre, k), Fs, y_hat)
-            y_hat = griffinLimInverse(W2[:, k, :], winSize, hopLength)
+            y_hat = griffinLimInverse(W2[:, :, k].T, winSize, hopLength)
             y_hat = y_hat/np.max(np.abs(y_hat))
             wavfile.write("%s/W2_%i.wav"%(pre, k), Fs, y_hat)
         #Invert the audio
@@ -587,19 +584,19 @@ def plotNMF1DConvSpectraJoint(V, W, H, iter, errs, hopLength = -1, plotComponent
         for k in range(K):
             plt.subplot(3, 2+K, 3+k)
             if hopLength > -1:
-                librosa.display.specshow(librosa.amplitude_to_db(W1[:, k, :]), \
+                librosa.display.specshow(librosa.amplitude_to_db(W1[:, :, k].T), \
                     hop_length=hopLength, y_axis='log', x_axis='time')
             else:
-                plt.imshow(W1[:, k, :], cmap = 'afmhot', \
+                plt.imshow(W1[:, :, k].T, cmap = 'afmhot', \
                         interpolation = 'nearest', aspect = 'auto')  
                 plt.colorbar()
             plt.title("W1_%i"%k)
             plt.subplot(3, 2+K, 2+K+3+k)
             if hopLength > -1:
-                librosa.display.specshow(librosa.amplitude_to_db(W2[:, k, :]), \
+                librosa.display.specshow(librosa.amplitude_to_db(W2[:, :, k].T), \
                     hop_length=hopLength, y_axis='log', x_axis='time')
             else:
-                plt.imshow(W2[:, k, :], cmap = 'afmhot', \
+                plt.imshow(W2[:, :, k].T, cmap = 'afmhot', \
                         interpolation = 'nearest', aspect = 'auto')  
                 plt.colorbar()
             plt.title("W2_%i"%k)
@@ -611,15 +608,15 @@ def plotNMF2DConvSpectra(V, W, H, iter, errs, hopLength = -1):
     """
     Plot NMF iterations on a log scale, showing V, H, and W*H
     :param V: An N x M target
-    :param W: An N x K x T source/corpus matrix
-    :returns H: A K x M x F matrix of source activations
+    :param W: An T x N x K source/corpus matrix
+    :returns H: An F x K x M matrix of source activations
     :param iter: The iteration number
     :param errs: Errors over time
     :param hopLength: The hop length (for plotting)
     """
     import librosa
     import librosa.display
-    K = W.shape[1]
+    K = W.shape[2]
 
     plt.subplot(2, 2+K, 1)
     if hopLength > -1:
@@ -651,16 +648,16 @@ def plotNMF2DConvSpectra(V, W, H, iter, errs, hopLength = -1):
     for k in range(K):
         plt.subplot(2, 2+K, 2+k+1)
         if hopLength > -1:
-            librosa.display.specshow(librosa.amplitude_to_db(W[:, k, :]), \
+            librosa.display.specshow(librosa.amplitude_to_db(W[:, :, k].T), \
                 hop_length=hopLength, y_axis='log', x_axis='time')
         else:
-            plt.imshow(W[:, k, :], cmap = 'afmhot', \
+            plt.imshow(W[:, :, k].T, cmap = 'afmhot', \
                     interpolation = 'nearest', aspect = 'auto')  
             plt.colorbar()
         plt.title("W%i"%k)
 
         plt.subplot(2, 2+K, (2+K)+2+k+1)
-        plt.imshow(H[k, :, :].T, cmap = 'afmhot', \
+        plt.imshow(H[:, k, :], cmap = 'afmhot', \
             interpolation = 'nearest', aspect = 'auto')
         plt.colorbar()
         plt.title("H%i"%k)
