@@ -3,6 +3,7 @@ import scipy.io as sio
 import matplotlib.pyplot as plt
 from SpectrogramTools import *
 from NMF import *
+from NMFGPU import *
 from NMFJoint import *
 
 def testNMFJointSynthetic():
@@ -42,11 +43,12 @@ def testNMF1DConvSynthetic():
     doNMF1DConv(V, K, T+5, L, plotfn=plotNMF1DConvSpectra)
 
 def testNMF2DConvSynthetic():
+    initParallelAlgorithms()
     np.random.seed(300)
     N = 20
     M = 40
     K = 2
-    L = 80
+    L = 200
     T = 10
     F = 5
     V = 0.1*np.ones((N, M))
@@ -56,10 +58,11 @@ def testNMF2DConvSynthetic():
     V[6+np.arange(T), 20+np.arange(T)] = 1
     V[10-np.arange(T), 22+np.arange(T)] = 0.5
     V[10+np.arange(T), 10+np.arange(T)] += 0.7
-    doNMF2DConv(V, K, T, F, L, plotfn=plotNMF2DConvSpectra)
+    doNMF2DConvGPU(V, K, T, F, L, plotfn=plotNMF2DConvSpectra)
     doNMF1DConv(V, K, T, L, plotfn=plotNMF1DConvSpectra)
 
 def testNMF2DConvJointSynthetic():
+    initParallelAlgorithms()
     np.random.seed(300)
     T = 10
     F = 10
@@ -109,14 +112,14 @@ def testNMF2DConvJointSynthetic():
 
 
     H2 = np.random.rand(F, K, N2)
-    H2[H2 > 0.9] = 1
+    H2[H2 > 0.98] = 1
     H2[H2 < 1] = 0
 
     A = multiplyConv2D(W1, H1)
     Ap = multiplyConv2D(W2, H1)
     B = multiplyConv2D(W1, H2)
 
-    doNMF2DConvJoint(A, Ap, B, K, T, F, 200, plotfn = plotNMF2DConvJointSpectra)
+    doNMF2DConvJointGPU(A, Ap, B, K, T, F, 200, plotfn = plotNMF2DConvJointSpectra)
 
 def outputNMFSounds(U1, U2, winSize, hopSize, Fs, fileprefix):
     for k in range(U1.shape[1]):
@@ -333,6 +336,7 @@ def testNMF1DTranslate():
     W2 = np.array([])
     Ss1 = []
     Ss2 = []
+    """
     for shift in range(-6, 7):
         tic = time.time()
         print("Doing shift %i"%shift)
@@ -358,7 +362,6 @@ def testNMF1DTranslate():
         print("Elapsed Time: %.3g"%(time.time()-tic))
         sio.savemat("Ws1DJoint.mat", {"W1":W1, "W2":W2})
         sio.savemat("Ss.mat", {"Ss1":Ss1, "Ss2":Ss2})
-
     """
     res = sio.loadmat("Ws1DJoint.mat")
     W1 = res['W1']
@@ -366,17 +369,15 @@ def testNMF1DTranslate():
     res = sio.loadmat("Ss.mat")
     Ss1 = res['Ss1']
     Ss2 = res['Ss2']
-    """
+
 
     #Step 3: Represent song B in dictionary W1
     if not os.path.exists("NMF1DB"):
         os.mkdir("NMF1DB")
     SB = STFT(B, winSize, hopSize)
-    """
     (W, H) = doNMF1DConv(np.abs(SB), K, T, NIters, W=W1, r=0, p=-1,\
                     plotfn=plotfn, plotComponents=False)
     sio.savemat("HB.mat", {"H":H})
-    """
     H = sio.loadmat("HB.mat")["H"]
     (SsB, RatiosB) = getComplexNMF1DTemplates(SB, W1, H, p = 2, audioParams = {'winSize':winSize, \
         'hopSize':hopSize, 'Fs':Fs, 'fileprefix':'NMF1DB/B'})
@@ -499,6 +500,6 @@ if __name__ == '__main__':
     #testNMF2DConvSynthetic()
     #testNMF1DMusic()
     #testNMF2DMusic()
-    testNMF1DTranslate()
-    #testNMF2DConvJointSynthetic()
+    #testNMF1DTranslate()
+    testNMF2DConvJointSynthetic()
     #testNMF2DJointMusic()

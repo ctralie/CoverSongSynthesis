@@ -205,10 +205,9 @@ def multiplyConv2D(W, H):
 
 def multiplyConv2DWGrad(W, H, V, VLam):
     """
-    Compute the 2D convolutional multiplicative update
-    for W
-    :param W: A NxKxT matrix of K sources over spatiotemporal spans NxT\
-    :param H: A KxMxF matrix of source activations for each submatrix of W\
+    Compute the 2D convolutional multiplicative update for W
+    :param W: A TxNxK matrix of K sources over spatiotemporal spans NxT\
+    :param H: A FxKxM matrix of source activations for each submatrix of W\
             over F transpositions over M time
     """
     WNums = np.zeros(W.shape) #Numerator
@@ -221,6 +220,24 @@ def multiplyConv2DWGrad(W, H, V, VLam):
             WNums[t, :, :] += thisV.dot(thisH.T)
             WDenoms[t, :, :] += thisVLam.dot(thisH.T)
     return WNums/WDenoms
+
+def multiplyConv2DHGrad(W, H, V, VLam):
+    """
+    Compute the 2D convolutional multiplicative update for H
+    :param W: A TxNxK matrix of K sources over spatiotemporal spans NxT\
+    :param H: A FxKxM matrix of source activations for each submatrix of W\
+            over F transpositions over M time
+    """
+    HNums = np.zeros(H.shape) #Numerator
+    HDenoms = np.zeros(H.shape) #Denomenator
+    for t in range(W.shape[0]):
+        thisV = shiftMatLRUD(V, dj=-t)
+        thisVLam = shiftMatLRUD(VLam, dj=-t)
+        for f in range(H.shape[0]):
+            thisW = shiftMatLRUD(W[t, :, :], di=f)
+            HNums[f, :, :] += (thisW.T).dot(thisV)
+            HDenoms[f, :, :] += (thisW.T).dot(thisVLam)
+    return HNums/HDenoms
 
 def doNMF1DConv(V, K, T, L, r = 0, p = -1, W = np.array([]), plotfn = None, plotComponents = True, \
         joint = False, prefix=""):
@@ -252,7 +269,7 @@ def doNMF1DConv(V, K, T, L, r = 0, p = -1, W = np.array([]), plotfn = None, plot
         W = np.random.rand(T, N, K)
     else:
         WFixed = True
-        K = W.shape[1]
+        K = W.shape[2]
         print("K = ", K)
     H = np.random.rand(K, M)
     WH = multiplyConv1D(W, H)
@@ -417,13 +434,10 @@ def doNMF2DConv(V, K, T, F, L, W = np.array([]), plotfn = None):
 
         #Step 2: Update Hs
         VLam = multiplyConv2D(W, H)
-        HT = np.swapaxes(H, 1, 2)
-        WT = np.swapaxes(W, 1, 2)
-        Fac = multiplyConv2DWGrad(HT, WT, V.T, VLam.T)
-        H = H*np.swapaxes(Fac, 1, 2)
+        H = H*multiplyConv2DHGrad(W, H, V, VLam)
 
         errs.append(getEuclideanError(V, multiplyConv2D(W, H)))
-        if plotfn and ((l+1) == L or (l+1)%40 == 0):
+        if plotfn and ((l+1) == L or (l+1)%60 == 0):
             plt.clf()
             plotfn(V, W, H, l+1, errs)
             plt.savefig("NMF2DConv_%i.png"%(l+1), bbox_inches = 'tight')
