@@ -276,7 +276,6 @@ def doNMF2DConvJointGPU(A, Ap, B, K, T, F, L, plotfn = None, prefix = ""):
     B = gpuarray.to_gpu(np.array(B, dtype=np.float32))
 
     errs = [getJointEuclideanErrorGPU(A, Ap, B, W1, W2, H1, H2)]
-    #errs = [getJointEuclideanError(A.get(), Ap.get(), B.get(), W1.get(), W2.get(), H1.get(), H2.get())]
     if plotfn:
         res=4
         plt.figure(figsize=((8+2*K)*res*1.2, 2*res))
@@ -290,7 +289,6 @@ def doNMF2DConvJointGPU(A, Ap, B, K, T, F, L, plotfn = None, prefix = ""):
         Lam11 = multiplyConv2DGPU(W1, H1)
         Lam12 = multiplyConv2DGPU(W1, H2)
         Lam21 = multiplyConv2DGPU(W2, H1)
-
         #Update W1
         (N11, D11) = multiplyConv2DWGradGPU(W1, H1, A, Lam11, doDivision = False)
         (N12, D12) = multiplyConv2DWGradGPU(W1, H2, B, Lam12, doDivision = False)
@@ -298,26 +296,27 @@ def doNMF2DConvJointGPU(A, Ap, B, K, T, F, L, plotfn = None, prefix = ""):
         Denom = skcuda.misc.add(D11, D12)
         Fac = skcuda.misc.divide(Num, Denom)
         W1 = skcuda.misc.multiply(W1, Fac)
-
         #Update W2
         Fac = multiplyConv2DWGradGPU(W2, H1, Ap, Lam21, doDivision = True)
         W2 = skcuda.misc.multiply(W2, Fac)
 
+        #Step 2: Update Hs
         #Update H1
+        Lam11 = multiplyConv2DGPU(W1, H1)
+        Lam12 = multiplyConv2DGPU(W1, H2)
+        Lam21 = multiplyConv2DGPU(W2, H1)
         (N11, D11) = multiplyConv2DHGradGPU(W1, H1, A, Lam11, doDivision = False)
         (N12, D12) = multiplyConv2DHGradGPU(W2, H1, Ap, Lam21, doDivision = False)
         Num = skcuda.misc.add(N11, N12)
         Denom = skcuda.misc.add(D11, D12)
         Fac = skcuda.misc.divide(Num, Denom)
         H1 = skcuda.misc.multiply(H1, Fac)
-
         #Update H2
         Fac = multiplyConv2DHGradGPU(W1, H2, B, Lam12, doDivision = True)
         H2 = skcuda.misc.multiply(H2, Fac)
 
 
         errs.append(getJointEuclideanErrorGPU(A, Ap, B, W1, W2, H1, H2))
-        #errs.append(getJointEuclideanError(A.get(), Ap.get(), B.get(), W1.get(), W2.get(), H1.get(), H2.get()))
         print("Elapsed Time: %.3g"%(time.time()-tic))
         if plotfn and ((l+1) == L or (l+1)%30 == 0):
             plt.clf()
