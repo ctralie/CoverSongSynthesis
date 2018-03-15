@@ -394,6 +394,65 @@ def getComplexNMF1DTemplates(S, W, H, p = 2, audioParams = None):
         wavfile.write("%sNMF.wav"%fileprefix, Fs, X)
     return (Ss, Ratios)
 
+
+def getComplexNMF2DTemplates(C, W, H, ZoomFac, p = 2, audioParams = None):
+    """
+    Given a complex CQT spectrogram and a factorization WH ~= |S| of its magnitude
+    spectrum, separate out the complex spectrogram into each of its components
+    :param C: An MxN complex spectrogram
+    :param W: An TxMxK matrix of K sources over frequencytemporal spans MxT
+    :param H: A FxKxN matrix of frequency shifted source activations
+    :param ZoomFac: Factor by which the CQT spectrogram has been downsampled
+    :param p: Power for Weiner filter in soft mask matrices
+    :param audioParams: {'Fs':int, 'bins_per_octave':int, 'prefix':string\
+                         'eng':matlab engine handle, 'XSize':int}\
+        If specified, save each component to disk as a wav file
+    """
+    import scipy.ndimage
+    K = W.shape[2]
+    #Step 1: Compute the masked matrices raised to the power p
+    AsSum = np.zeros(C.shape)
+    As = []
+    for k in range(K):
+        Hk = np.array(H)
+        Hk[:, 0:k, :] = 0
+        Hk[:, k+1::, :] = 0
+        Ck = multiplyConv2D(W, Hk)
+        Ck = scipy.ndimage.zoom(Ck, (1, ZoomFac))**p
+        As.append(Ck)
+        AsSum += As[-1]
+    #Step 2: Average masked portions of the CQT to come up with
+    #complex-valued templates
+    Cs = []
+    Ratios = []
+    AllPow = np.abs(np.sum(C*np.conj(C), 0))
+    for k in range(K):
+        Cs.append(C*As[k]/AsSum)
+        Pow = np.abs(np.sum(Cs[k]*np.conj(Cs[k]), 0))
+        Ratios.append(Pow/AllPow)
+    #Step 4: Save components if user requested
+    if audioParams:
+        from CQT import getiCQTGriffinLimNakamuraMatlab
+        [bins_per_octave, eng] = [audioParams['bins_per_octave'], audioParams['eng']]
+        [Fs, fileprefix, XSize] = [audioParams['Fs'], audioParams['prefix'], audioParams['XSize']]
+        import matplotlib.pyplot as plt
+        from scipy.io import wavfile
+        X = np.array([])
+        for k in range(K):
+            (Xk, Spec) = getiCQTGriffinLimNakamuraMatlab(eng, Cs[k], XSize, Fs, bins_per_octave, NIters=100)
+            if k == 0:
+                X = Xk
+            else:
+                X += Xk
+            wavfile.write("%s_%i.wav"%(fileprefix, k), Fs, Xk)
+            plt.clf()
+            plt.plot(Ratios[k])
+            plt.title("Ratio, %.3g Above 0.1"%(np.sum(Ratios[k] > 0.1)/Ratios[k].size))
+            plt.savefig("%s_%iPower.svg"%(fileprefix, k), bbox_inches = 'tight')
+        wavfile.write("%sNMF.wav"%fileprefix, Fs, X)
+    return (Cs, Ratios)
+
+
 def doNMF2DConv(V, K, T, F, L, W = np.array([]), plotfn = None):
     """
     Implementing the Euclidean 2D NMF technique described in 
@@ -682,6 +741,123 @@ def plotNMF2DConvSpectra(V, W, H, iter, errs, hopLength = -1):
         errs = errs[1::]
     plt.semilogy(errs)
     plt.title("Errors")
+
+def plotNMF2DConvSpectraJoint(V, W, H, iter, errs, hopLength = -1, plotComponents = True, \
+        audioParams = None):
+    """
+    Plot NMF iterations on a log scale, showing V, H, and W*H, with the understanding
+    that V and W are two songs concatenated on top of each other
+    :param V: An N x M target
+    :param W: An T x N x K source/corpus matrix
+    :returns H: An F x K x M matrix of source activations
+    :param iter: The iteration number
+    :param errs: Errors over time
+    :param hopLength: The hop length (for plotting)
+    """
+    import librosa
+    import librosa.display
+    import os
+    K = W.shape[2]
+    if not plotComponents:
+        K = 0
+
+    N = int(W.shape[1]/2)
+    W1 = W[:, 0:N, :]
+    W2 = W[:, N::, :]
+    V1 = V[0:N, :]
+    V2 = V[N::, :]
+    WH = multiplyConv2D(W, H)
+
+    if audioParams:
+        from CQT import getiCQTGriffinLimNakamuraMatlab
+        from scipy.io import wavfile
+        import scipy.ndimage
+        [Fs, prefix] = [audioParams['Fs'], audioParams['prefix']]
+        [eng, XSizes] = [audioParams['eng'], audioParams['XSizes']]
+        ZoomFac = audioParams['ZoomFac']
+        bins_per_octave = audioParams['bins_per_octave']
+        pre = "%sNMF2DJointIter%i"%(prefix, iter)
+        if not os.path.exists(pre):
+            os.mkdir(pre)
+        #Invert the audio
+        if bins_per_octave > -1:
+            for (s1, Lam) in zip(["A", "Ap"], [WH[0:N, :], WH[N::, :]]):
+                print("%s.size = %i"%(s1, XSizes[s1]))
+                LamZoom = scipy.ndimage.interpolation.zoom(Lam, (1, ZoomFac))
+                (y_hat, spec) = getiCQTGriffinLimNakamuraMatlab(eng, LamZoom, XSizes[s1], Fs, \
+                    bins_per_octave, NIters=100, randPhase = True)
+                y_hat = y_hat/np.max(np.abs(y_hat))
+                sio.wavfile.write("%s/%s.wav"%(pre, s1), Fs, y_hat)
+
+    plt.subplot(3, 2+K, 1)
+    if hopLength > -1:
+        librosa.display.specshow(librosa.amplitude_to_db(V1), hop_length = hopLength, \
+                                    y_axis = 'log', x_axis = 'time')
+    else:
+        plt.imshow(V1, cmap = 'afmhot', interpolation = 'nearest', aspect = 'auto')
+        plt.colorbar()
+    plt.title("V1")
+    plt.subplot(3, 2+K, 2)
+    if hopLength > -1:
+        librosa.display.specshow(librosa.amplitude_to_db(V2), hop_length = hopLength, \
+                                    y_axis = 'log', x_axis = 'time')
+    else:
+        plt.imshow(V2, cmap = 'afmhot', interpolation = 'nearest', aspect = 'auto')
+        plt.colorbar()
+    plt.title("V2")
+    plt.subplot(3, 2+K, 2+K+1)
+    
+    if hopLength > -1:
+        librosa.display.specshow(librosa.amplitude_to_db(WH[0:N, :]), hop_length = hopLength,\
+                                 y_axis = 'log', x_axis = 'time')
+    else:
+        plt.imshow(WH[0:N, :], cmap = 'afmhot', interpolation = 'nearest', aspect = 'auto')
+        plt.colorbar()
+    plt.title("W1*H")
+    errs = np.array(errs)
+    if errs.shape[0] > 1:
+        errs = errs[1::, :]
+    plt.subplot(3, 2+K, (2+K)*2+1)
+    plt.semilogy(errs[:, 0])
+    plt.ylim([0.9*np.min(errs[:, 0]), np.max(errs[:, 0])*1.1])
+    plt.title("Errors 1")
+    plt.subplot(3, 2+K, (2+K)*2+2)
+    plt.semilogy(errs[:, 1])
+    plt.ylim([0.9*np.min(errs[:, 1]), np.max(errs[:, 1])*1.1])
+    plt.title("Errors 2")
+
+    plt.subplot(3, 2+K, 2+K+2)
+    if hopLength > -1:
+        librosa.display.specshow(librosa.amplitude_to_db(WH[N::, :]), hop_length = hopLength,\
+                                 y_axis = 'log', x_axis = 'time')
+    else:
+        plt.imshow(WH[N::, :], cmap = 'afmhot', interpolation = 'nearest', aspect = 'auto')
+        plt.colorbar()
+    plt.title("W1*H")
+
+    if plotComponents:
+        for k in range(K):
+            plt.subplot(3, 2+K, 3+k)
+            if hopLength > -1:
+                librosa.display.specshow(librosa.amplitude_to_db(W1[:, :, k].T), \
+                    hop_length=hopLength, y_axis='log', x_axis='time')
+            else:
+                plt.imshow(W1[:, :, k].T, cmap = 'afmhot', \
+                        interpolation = 'nearest', aspect = 'auto')  
+                plt.colorbar()
+            plt.title("W1_%i"%k)
+            plt.subplot(3, 2+K, 2+K+3+k)
+            if hopLength > -1:
+                librosa.display.specshow(librosa.amplitude_to_db(W2[:, :, k].T), \
+                    hop_length=hopLength, y_axis='log', x_axis='time')
+            else:
+                plt.imshow(W2[:, :, k].T, cmap = 'afmhot', \
+                        interpolation = 'nearest', aspect = 'auto')  
+                plt.colorbar()
+            plt.title("W2_%i"%k)
+            plt.subplot(3, 2+K, (2+K)*2+3+k)
+            plt.imshow(H[:, k, :], cmap = 'afmhot', interpolation = 'nearest', aspect = 'auto')
+            plt.title("H%i"%k)
 
 if __name__ == '__main__':
     np.random.seed(10)

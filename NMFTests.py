@@ -120,7 +120,7 @@ def testNMF2DConvJointSynthetic():
     Ap = multiplyConv2D(W2, H1)
     B = multiplyConv2D(W1, H2)
 
-    doNMF2DConvJointGPU(A, Ap, B, K, T, F, 200, plotfn = plotNMF2DConvJointSpectra)
+    doNMF2DConvJointGPU(A, Ap, B, K, T, F, 200, plotfn = plotNMF2DConvSpectraJoint3Way)
 
 def outputNMFSounds(U1, U2, winSize, hopSize, Fs, fileprefix):
     for k in range(U1.shape[1]):
@@ -393,7 +393,12 @@ def testNMF1DTranslate():
         wavfile.write("%s/Bp%i.wav"%(foldername, i), Fs, y)
 
 
-def testNMF2DJointMusic():
+def testNMF2DMusic(AllJoint = False):
+    """
+    :param joint: If true, do a joint embedding with A, Ap, and B\
+        If false, then do a joint embedding with (A, Ap) and represent\
+        B in the A dictionary
+    """
     import librosa
     from scipy.io import wavfile
     import scipy.ndimage
@@ -417,15 +422,17 @@ def testNMF2DJointMusic():
 
     bins_per_octave = 24
     hopSize = int(np.round(Fs/100.0)) #For librosa display to know approximate timescale
-    K = 4
+    K = 8
     T = 12
     F = 36
     NIters = 440
 
+    resOrig = {}
     res = {}
     for (V, s) in zip([A, Ap, B], ["A", "Ap", "B"]):
         print("Doing CQT of %s..."%s)
         C = getCQTNakamuraMatlab(eng, V, Fs, bins_per_octave )
+        resOrig[s] = C
         C = np.abs(C)
         C = scipy.ndimage.interpolation.zoom(C, (1, 1.0/ZoomFac))
         XSizes[s] = V.size
@@ -437,14 +444,56 @@ def testNMF2DJointMusic():
             sio.wavfile.write("%sGTInverted.wav"%s, Fs, y_hat)
     XSizes["Bp"] = XSizes["B"]
     print(XSizes)
+    [CAOrig, CApOrig, CBOrig] = [resOrig['A'], resOrig['Ap'], resOrig['B']]
     [CA, CAp, CB] = [res['A'], res['Ap'], res['B']]
 
-    plotfn = lambda A, Ap, B, W1, W2, H1, H2, iter, errs: \
-            plotNMF2DConvJointSpectra(A, Ap, B, W1, W2, H1, H2, iter, errs,\
-            hopLength = hopSize, audioParams={'Fs':Fs, 'bins_per_octave':bins_per_octave, \
-                'prefix':'', 'eng':eng, 'XSizes':XSizes, "ZoomFac":ZoomFac}, useGPU = True)
-    (W1, W2, H1, H2) = doNMF2DConvJointGPU(CA, CAp, CB, K, T, F, L=NIters, plotfn=plotfn)
-    sio.savemat("SmoothCriminalNMF2DJoint.mat", {"W1":W1, "W2":W2, "H1":H1, "H2":H2})
+    audioParams={'Fs':Fs, 'bins_per_octave':bins_per_octave, \
+                'prefix':'', 'eng':eng, 'XSizes':XSizes, "ZoomFac":ZoomFac}
+
+    if AllJoint:
+        #Do joint 2DNMF
+        plotfn = lambda A, Ap, B, W1, W2, H1, H2, iter, errs: \
+            plotNMF2DConvSpectraJoint3Way(A, Ap, B, W1, W2, H1, H2, iter, errs,\
+            hopLength = hopSize, audioParams=audioParams, useGPU = True)
+        (W1, W2, H1, H2) = doNMF2DConvJointGPU(CA, CAp, CB, K, T, F, L=NIters, plotfn=plotfn)
+        sio.savemat("SmoothCriminalAllNMF2DJoint.mat", {"W1":W1, "W2":W2, "H1":H1, "H2":H2})
+        #res = sio.loadmat("SmoothCriminalAllNMF2DJoint.mat")
+        #[W1, W2, H1, H2] = [res['W1'], res['W2'], res['H1'], res['H2']]
+        
+        #Output filtered sounds
+        foldername = "AllJoint2DNMFFiltered"
+    else:
+        #Do 2DNMF on a joint embedding of A and Ap
+        N = CA.shape[0]
+        C = np.zeros((N*2, CA.shape[1]))
+        C[0:N, :] = CA
+        C[N::, :] = CAp
+        plotfn = lambda V, W, H, iter, errs: \
+            plotNMF2DConvSpectraJoint(V, W, H, iter, errs, \
+            hopLength = hopSize, audioParams = audioParams)
+        (W, H1) = doNMF2DConvGPU(C, K, T, F, L=NIters, plotfn = plotfn, joint = True, plotInterval=150)
+        #Represent B in the dictionary of A
+        W1 = W[:, 0:N, :]
+        W2 = W[:, 0:N, :]
+        plotfn = lambda V, W, H, iter, errs: \
+            plotNMF2DConvSpectra(V, W, H, iter, errs, hopLength = hopSize)
+        (W, H2) = doNMF2DConvGPU(CB, K, T, F, W=W1, L=NIters, plotfn=plotfn)
+        sio.savemat("SmoothCriminalNMF2DJoint.mat", {"W1":W1, "W2":W2, "H1":H1, "H2":H2})
+        #res = sio.loadmat("SmoothCriminalNMF2DJoint.mat")
+        #[W1, W2, H1, H2] = [res['W1'], res['W2'], res['H1'], res['H2']]
+
+        foldername = "Joint2DNMFFiltered"
+    if not os.path.exists(foldername):
+        os.mkdir(foldername)
+    audioParams['prefix'] = "%s/A"%foldername
+    audioParams['XSize'] = XSizes['A']
+    getComplexNMF2DTemplates(CAOrig, W1, H1, ZoomFac, p = 2, audioParams = audioParams)
+    audioParams['prefix'] = "%s/Ap"%foldername
+    audioParams['XSize'] = XSizes['Ap']
+    getComplexNMF2DTemplates(CApOrig, W2, H1, ZoomFac, p = 2, audioParams = audioParams)
+    audioParams['prefix'] = "%s/B"%foldername
+    audioParams['XSize'] = XSizes['B']
+    getComplexNMF2DTemplates(CBOrig, W1, H2, ZoomFac, p = 2, audioParams = audioParams)
 
 
 if __name__ == '__main__':
@@ -456,4 +505,4 @@ if __name__ == '__main__':
     #testNMF1DMusic()
     #testNMF1DTranslate()
     #testNMF2DConvJointSynthetic()
-    testNMF2DJointMusic()
+    testNMF2DMusic(AllJoint = False)

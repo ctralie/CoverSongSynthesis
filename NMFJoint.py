@@ -301,7 +301,7 @@ def doNMF2DConvJoint(A, Ap, B, K, T, F, L, plotfn = None, prefix = "", eps = 1e-
     return (W1, W2, H1, H2)
 
 
-def plotNMF2DConvJointSpectra(A, Ap, B, W1, W2, H1, H2, iter, errs, \
+def plotNMF2DConvSpectraJoint3Way(A, Ap, B, W1, W2, H1, H2, iter, errs, \
         hopLength = -1, prefix = "", audioParams = None, plotElems = True, \
         useGPU = False):
     """
