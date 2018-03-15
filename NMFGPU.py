@@ -359,7 +359,7 @@ def testNMF2DWGradientGPU():
     initParallelAlgorithms()
     np.random.seed(100)
     blockdim = 32
-    M = 300
+    M = 1025
     K = 10
     T = 20
     F = 40
@@ -395,5 +395,5 @@ def testNMF2DWGradientGPU():
     plt.show()
 
 if __name__ == '__main__':
-    testNMF2DMultiplyGPU()
-    #testNMF2DWGradientGPU()
+    #testNMF2DMultiplyGPU()
+    testNMF2DWGradientGPU()

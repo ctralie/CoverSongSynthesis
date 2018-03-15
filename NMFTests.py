@@ -2,6 +2,7 @@ import numpy as np
 import scipy.io as sio
 import matplotlib.pyplot as plt
 from SpectrogramTools import *
+from CQT import *
 from NMF import *
 from NMFGPU import *
 from NMFJoint import *
@@ -211,56 +212,6 @@ def testNMFMusaicingSimple():
     Y = griffinLimInverse(V2, winSize, hopSize, NIters=30)
     Y = Y/np.max(np.abs(Y))
     wavfile.write("letitbee.wav", Fs, Y)
-
-def testNMF2DMusic():
-    import librosa2
-    from scipy.io import wavfile
-    X1, Fs = librosa2.load("music/SmoothCriminalMJ.mp3", sr=22050)
-    X1 = X1[Fs*15:Fs*30]
-
-    X2, Fs = librosa2.load("music/MJBad.mp3")
-    X2 = X2[Fs*3:Fs*18]
-
-    X = np.zeros(len(X1)+len(X2)+Fs)
-    X[0:len(X1)] = X1
-    X[-len(X2)::] = X2
-
-    hopSize = 64
-    bins_per_octave = 24
-    noctaves = 7
-    K = 20
-    T = 40
-    F = 18
-    NIters = 440
-
-    """
-    D = librosa2.stft(X)
-    H, P = librosa2.decompose.hpss(D)
-    X_harm = librosa2.core.istft(H)
-    X_perc = librosa2.core.istft(P)
-    """
-
-    C = librosa2.cqt(y=X, sr=Fs, hop_length=hopSize, n_bins=noctaves*bins_per_octave,\
-               bins_per_octave=bins_per_octave)
-    C = np.abs(C)
-    y_hat = griffinLimCQTInverse(C, Fs, hopSize, bins_per_octave, NIters=10)
-    y_hat = y_hat/np.max(np.abs(y_hat))
-    sio.wavfile.write("smoothcriminalGTInverted.wav", Fs, y_hat)
-
-    plotfn = lambda V, W, H, iter, errs: plotNMF2DConvSpectra(V, W, H, iter, errs, hopLength = hopSize)
-    (W, H) = doNMF2DConv(C, K, T=T, F=18, L=NIters, plotfn=plotfn)
-    sio.savemat("SmoothCriminalNMF2D.mat", {"W":W, "H":H})
-    C = multiplyConv2D(W, H)
-    print("C.shape = ", C.shape)
-    y_hat = griffinLimCQTInverse(C, Fs, hopSize, bins_per_octave, NIters=10)
-    y_hat = y_hat/np.max(np.abs(y_hat))
-    sio.wavfile.write("smoothcriminalNMF.wav", Fs, y_hat)
-
-    #Also invert each Wt
-    for k in range(W.shape[1]):
-        y_hat = griffinLimCQTInverse(W[:, :, k].T, Fs, hopSize, bins_per_octave, NIters=10)
-        y_hat = y_hat/np.max(np.abs(y_hat))
-        sio.wavfile.write("smoothcriminalW%i.wav"%k, Fs, y_hat)
 
 def testNMF1DMusic():
     import librosa
@@ -499,7 +450,6 @@ if __name__ == '__main__':
     #testNMF1DConvSynthetic()
     #testNMF2DConvSynthetic()
     #testNMF1DMusic()
-    #testNMF2DMusic()
     #testNMF1DTranslate()
     testNMF2DConvJointSynthetic()
     #testNMF2DJointMusic()

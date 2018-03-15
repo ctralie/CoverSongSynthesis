@@ -192,32 +192,6 @@ def griffinLimInverse(S, W, H, NIters = 10, winfunc = None):
     X = iSTFT(A, W, H, winfunc)
     return np.real(X)
 
-def griffinLimCQTInverse(C, Fs, H, bins_per_octave, NIters = 10):
-    """
-    Do Griffin Lim inverse using CQT instead of STFT
-    :param C: An NBinsxNWindows CQT
-    :param Fs: Sample rate
-    :param H: Hop length used in C
-    :param bins_per_octave: Number of bins per octave
-    :param NIters: Number of iterations to go through (default 10)
-    :returns: An Nx1 real signal corresponding to phase retrieval
-    """
-    import librosa2
-    eps = 2.2204e-16
-    A = np.array(C, dtype = np.complex)
-    for i in range(NIters):
-        print("Iteration %i of %i"%(i+1, NIters))
-        x = librosa2.icqt(C=A, sr=Fs, hop_length=H, \
-                     bins_per_octave=bins_per_octave)
-        A = librosa2.cqt(y=x, sr=Fs, hop_length=H, n_bins=A.shape[0],\
-               bins_per_octave=bins_per_octave)
-        Norm = np.sqrt(A*np.conj(A))
-        Norm[Norm < eps] = 1
-        A = C*(A/Norm)
-    X = librosa2.icqt(C=A, sr=Fs, hop_length=H, \
-                     bins_per_octave=bins_per_octave)
-    return np.real(X)
-
 def testPitchShift(X, Fs, W, H, shift, filename):
     W = 2048
     H = 128
@@ -225,36 +199,6 @@ def testPitchShift(X, Fs, W, H, shift, filename):
     S = pitchShiftSTFT(S, Fs, shift)
     X2 = griffinLimInverse(S, W, H, 20)
     wavfile.write(filename, Fs, X2)
-
-def testPitchShiftCQT(X, Fs, H, bins_per_octave, shift, filename, noctaves):
-    from scipy.io import wavfile
-    import librosa2
-    import librosa2.display
-    C = librosa2.cqt(y=X, sr=Fs, hop_length=H, n_bins=noctaves*bins_per_octave,\
-               bins_per_octave=bins_per_octave)
-    print("C.shape = ", C.shape)
-    C2 = np.zeros(C.shape, dtype = np.complex)
-    k = int(bins_per_octave/12)
-    if abs(shift) > 0:
-        C2[k*shift::, :] = C[0:-k*shift, :]
-    else:
-        C2 = C
-    plt.subplot(211)
-    librosa2.display.specshow(librosa.amplitude_to_db(C, ref=np.max),\
-                sr=Fs, x_axis='time', y_axis='cqt_note', bins_per_octave=bins_per_octave)
-    plt.subplot(212)
-    librosa2.display.specshow(librosa.amplitude_to_db(C2, ref=np.max),\
-                sr=Fs, x_axis='time', y_axis='cqt_note', bins_per_octave=bins_per_octave)
-    plt.title("After Shift By %i"%shift)
-    plt.show()
-    x = librosa2.icqt(C=C2, sr=Fs, hop_length=H, \
-                    bins_per_octave=bins_per_octave)
-    wavfile.write("complexicqt_%s"%filename, Fs, x)
-
-    C2 = np.abs(C2)
-    y_hat = griffinLimCQTInverse(C2, Fs, H, bins_per_octave)
-    y_hat = y_hat/np.max(np.abs(y_hat))
-    wavfile.write(filename, Fs, y_hat)
 
 if __name__ == '__main__':
     import librosa
