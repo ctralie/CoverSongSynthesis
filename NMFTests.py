@@ -394,53 +394,57 @@ def testNMF1DTranslate():
 
 
 def testNMF2DJointMusic():
-    import librosa2
+    import librosa
     from scipy.io import wavfile
+    import scipy.ndimage
+    initParallelAlgorithms()
+    eng = initMatlabEngine()
+    doInitialInversions = False
 
     Fs, X = sio.wavfile.read("music/SmoothCriminalAligned.wav")
+    X = np.array(X, dtype=np.float32)
     A = X[:, 0]/(2.0**15)
     Ap = X[:, 1]/(2.0**15)
     #Only take 15 seconds for initial experiments
-    A = A[5:Fs*20]
-    Ap = Ap[5:Fs*20]
+    A = A[5*Fs:Fs*25]
+    Ap = Ap[5*Fs:Fs*25]
 
-    B, Fs = librosa2.load("music/MJBad.mp3")
-    B = B[Fs*3:Fs*18]
+    B, Fs = librosa.load("music/MJBad.mp3")
+    B = B[Fs*3:Fs*23]
 
-    hopSize = 64
+    XSizes = {}
+    ZoomFac = 8 #Scaling factor so that each window is approximately 10ms
+
     bins_per_octave = 24
-    noctaves = 7
-    K = 8
-    T = 80
+    hopSize = int(np.round(Fs/100.0)) #For librosa display to know approximate timescale
+    K = 4
+    T = 12
     F = 36
     NIters = 440
 
-    """
     res = {}
     for (V, s) in zip([A, Ap, B], ["A", "Ap", "B"]):
-        C = librosa2.cqt(y=V, sr=Fs, hop_length=hopSize, n_bins=noctaves*bins_per_octave,\
-                bins_per_octave=bins_per_octave)
+        print("Doing CQT of %s..."%s)
+        C = getCQTNakamuraMatlab(eng, V, Fs, bins_per_octave )
         C = np.abs(C)
+        C = scipy.ndimage.interpolation.zoom(C, (1, 1.0/ZoomFac))
+        XSizes[s] = V.size
         res[s] = C
-        y_hat = griffinLimCQTInverse(C, Fs, hopSize, bins_per_octave, NIters=10)
-        y_hat = y_hat/np.max(np.abs(y_hat))
-        sio.wavfile.write("%sGTInverted.wav"%s, Fs, y_hat)
-    [CA, CAp, CB] = [res['A'], res['Ap'], res['B']]
-    """
-    res = sio.loadmat("Nakamura.mat")
+        if doInitialInversions:
+            CZoom = scipy.ndimage.interpolation.zoom(C, (1, ZoomFac))
+            (y_hat, spec) = getiCQTGriffinLimNakamuraMatlab(eng, CZoom, V.size, Fs, bins_per_octave, \
+                NIters=100, randPhase = True)
+            sio.wavfile.write("%sGTInverted.wav"%s, Fs, y_hat)
+    XSizes["Bp"] = XSizes["B"]
+    print(XSizes)
     [CA, CAp, CB] = [res['A'], res['Ap'], res['B']]
 
     plotfn = lambda A, Ap, B, W1, W2, H1, H2, iter, errs: \
             plotNMF2DConvJointSpectra(A, Ap, B, W1, W2, H1, H2, iter, errs,\
-            hopLength = hopSize)#, audioParams={'Fs':Fs, 'bins_per_octave':bins_per_octave, 'prefix':''})
-    (W1, W2, H1, H2) = doNMF2DConvJoint(CA, CAp, CB, K, T, F, L=NIters, plotfn=plotfn)
+            hopLength = hopSize, audioParams={'Fs':Fs, 'bins_per_octave':bins_per_octave, \
+                'prefix':'', 'eng':eng, 'XSizes':XSizes, "ZoomFac":ZoomFac}, useGPU = True)
+    (W1, W2, H1, H2) = doNMF2DConvJointGPU(CA, CAp, CB, K, T, F, L=NIters, plotfn=plotfn)
     sio.savemat("SmoothCriminalNMF2DJoint.mat", {"W1":W1, "W2":W2, "H1":H1, "H2":H2})
-    CA = multiplyConv2D(W1, H1)
-    CAp = multiplyConv2D(W2, H1)
-    CB = multiplyConv2D(W1, H2)
-    CBp = multiplyConv2D(W2, H2)
-    sio.savemat("SmoothCriminalNMF2DJointCs.mat", {"CA":CA, "CAp":CAp, "CB":CB, "CBp":CBp})
-
 
 
 if __name__ == '__main__':
@@ -451,5 +455,5 @@ if __name__ == '__main__':
     #testNMF2DConvSynthetic()
     #testNMF1DMusic()
     #testNMF1DTranslate()
-    testNMF2DConvJointSynthetic()
-    #testNMF2DJointMusic()
+    #testNMF2DConvJointSynthetic()
+    testNMF2DJointMusic()

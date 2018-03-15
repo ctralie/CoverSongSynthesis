@@ -240,7 +240,7 @@ def getJointEuclideanErrorGPU(A, Ap, B, W1, W2, H1, H2):
 
 from NMFJoint import getJointEuclideanError
 
-def doNMF2DConvJointGPU(A, Ap, B, K, T, F, L, plotfn = None, prefix = ""):
+def doNMF2DConvJointGPU(A, Ap, B, K, T, F, L, plotfn = None, prefix = "", plotFirst = False):
     """
     Implementing the Euclidean 2D NMF technique described in 
     "Nonnegative Matrix Factor 2-D Deconvolution
@@ -279,16 +279,18 @@ def doNMF2DConvJointGPU(A, Ap, B, K, T, F, L, plotfn = None, prefix = ""):
     if plotfn:
         res=4
         plt.figure(figsize=((8+2*K)*res*1.2, 2*res))
-        plotfn(A.get(), Ap.get(), B.get(), W1.get(), W2.get(), H1.get(), H2.get(), 0, errs)
-        pre = "%sNMFJointIter%i"%(prefix, 0)
-        plt.savefig("%s/NMF2DConvJoint_%i.png"%(pre, 0), bbox_inches = 'tight')
+        if plotFirst:
+            plotfn(A.get(), Ap.get(), B.get(), W1.get(), W2.get(), H1.get(), H2.get(), 0, errs)
+            pre = "%sNMFJointIter%i"%(prefix, 0)
+            plt.savefig("%s/NMF2DConvJoint_%i.png"%(pre, 0), bbox_inches = 'tight')
     for l in range(L):
         print("Joint 2DNMF iteration %i of %i"%(l+1, L))
         tic = time.time()
         #Step 1: Update Ws
-        Lam11 = multiplyConv2DGPU(W1, H1)
-        Lam12 = multiplyConv2DGPU(W1, H2)
-        Lam21 = multiplyConv2DGPU(W2, H1)
+        Lam11 = multiplyConv2DGPU(W1, H1, Verbose = True)
+        Lam12 = multiplyConv2DGPU(W1, H2, Verbose = True)
+        Lam21 = multiplyConv2DGPU(W2, H1, Verbose = True)
+
         #Update W1
         (N11, D11) = multiplyConv2DWGradGPU(W1, H1, A, Lam11, doDivision = False)
         (N12, D12) = multiplyConv2DWGradGPU(W1, H2, B, Lam12, doDivision = False)
@@ -315,15 +317,14 @@ def doNMF2DConvJointGPU(A, Ap, B, K, T, F, L, plotfn = None, prefix = ""):
         Fac = multiplyConv2DHGradGPU(W1, H2, B, Lam12, doDivision = True)
         H2 = skcuda.misc.multiply(H2, Fac)
 
-
         errs.append(getJointEuclideanErrorGPU(A, Ap, B, W1, W2, H1, H2))
         print("Elapsed Time: %.3g"%(time.time()-tic))
-        if plotfn and ((l+1) == L or (l+1)%30 == 0):
+        if plotfn and (l+1) == L:
             plt.clf()
             plotfn(A.get(), Ap.get(), B.get(), W1.get(), W2.get(), H1.get(), H2.get(), l+1, errs)
             pre = "%sNMFJointIter%i"%(prefix, l+1)
             plt.savefig("%s/NMF2DConvJoint_%i.png"%(pre, l+1), bbox_inches = 'tight')
-    return (W1, W2, H1, H2)
+    return (W1.get(), W2.get(), H1.get(), H2.get())
 
 def testNMF2DMultiplyGPU():
     initParallelAlgorithms()

@@ -64,7 +64,8 @@ def getiCQTNakamuraMatlab(eng, C, T, fs, resol, memCall = False):
         eng.iCQT()
         return sio.loadmat("CQTTemp.mat")['rec']
 
-def getiCQTGriffinLimNakamuraMatlab(eng, C, T, fs, resol, NIters = 20, memCall = False):
+def getiCQTGriffinLimNakamuraMatlab(eng, C, T, fs, resol, NIters = 20, \
+        randPhase = False, memCall = False):
     """
     Wrap around Nakamura's Matalb code to compute Griffin Lim iCQT
     :param eng: Matlab engine handle
@@ -72,9 +73,12 @@ def getiCQTGriffinLimNakamuraMatlab(eng, C, T, fs, resol, NIters = 20, memCall =
     :param T: Length of signal
     :param Fs: Sample rate
     :param resol: Number of CQT bins per octave
+    :param randPhase: If true, multiply C by a random phase
     :param memCall: Whether to keep arrays/params in memory or to save them to the \
         hard drive in a temporary array (latter is faster for some reason)
     """
+    if randPhase:
+        C = np.exp(np.complex(0, 1)*np.random.rand(C.shape[0], C.shape[1]))*C
     if memCall:
         import matlab.engine
         print("Converting iCQT parameters to Matlab array..")
@@ -110,6 +114,6 @@ if __name__ == '__main__':
     C2 = np.zeros(C.shape)
     steps = 3
     C2[0:-steps*2, :] = C[steps*2::, :]
-    C2 = np.exp(np.complex(0, 1)*np.random.rand(C2.shape[0], C2.shape[1]))*C2
-    (Z, CRec) = getiCQTGriffinLimNakamuraMatlab(eng, C2, A.size, Fs, 24, NIters=100)
+    (Z, CRec) = getiCQTGriffinLimNakamuraMatlab(eng, C2, A.size, Fs, 24, \
+        NIters=100, randPhase = True)
     wavfile.write("reconphase.wav", Fs, Z)

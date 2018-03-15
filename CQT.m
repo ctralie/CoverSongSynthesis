@@ -1,7 +1,3 @@
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%%       test code
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
 function [C] = CQT(X, fs, resol)
   %X: 1D array of audio samples
   %fs: Samplerate
