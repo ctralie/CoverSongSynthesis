@@ -257,7 +257,7 @@ def testNMF1DMusic():
 def testNMF1DTranslate():
     import librosa
     from scipy.io import wavfile
-    from GeometricCoverSongs.CSMSSMTools import getCSM
+    from SongAnalogies import doSpectrogramAnalogies, doSpectrogramAnalogiesSimple
     hopSize = 256
     winSize = 2048
     K=5
@@ -326,12 +326,17 @@ def testNMF1DTranslate():
     if not os.path.exists("NMF1DB"):
         os.mkdir("NMF1DB")
     SB = STFT(B, winSize, hopSize)
+    """
     (W, H) = doNMF1DConv(np.abs(SB), K, T, NIters, W=W1, r=0, p=-1,\
                     plotfn=plotfn, plotComponents=False)
     sio.savemat("HB.mat", {"H":H})
+    """
     H = sio.loadmat("HB.mat")["H"]
     (SsB, RatiosB) = getComplexNMF1DTemplates(SB, W1, H, p = 2, audioParams = {'winSize':winSize, \
         'hopSize':hopSize, 'Fs':Fs, 'fileprefix':'NMF1DB/B'})
+    powers = np.sum(H, 1)
+    idx = np.argsort(-powers)
+    cutoff = powers[idx[6]]
 
     #Step 4: Figure out chunks from tracks in A that approximate tracks in B
     #and use them to create B' chunks
@@ -339,32 +344,14 @@ def testNMF1DTranslate():
     if not os.path.exists(foldername):
         os.mkdir(foldername)
     SsBp = []
-    Kappa = 5 #Coherence parameter
     SBpFinal = np.zeros_like(SB)
     for i, (SA, SAp, SB) in enumerate(zip(Ss1, Ss2, SsB)):
+        if powers[i] < cutoff:
+            continue
         print("Synthesizing track %i of %i"%(i+1, len(Ss1)))
-        #Compute normalized spectrogram similarities for each window
-        SBp = np.zeros_like(SB)
-        MagSA = np.sqrt(np.abs(np.sum(SA*np.conj(SA), 0)))
-        MagSA[MagSA == 0] = 1
-        MagSB = np.sqrt(np.abs(np.sum(SB*np.conj(SB), 0)))
-        MagSB[MagSB == 0] = 1
-        SA = SA/MagSA[None, :]
-        SB = SB/MagSB[None, :]
-        SAM = np.abs(SA)
-        for k in range(SB.shape[1]):
-            x = np.abs(SB[:, k].flatten())
-            D = getCSM(x[None, :], SAM.T).flatten()
-            idx = np.argmin(D)
-            dist = D[idx]
-            if k > 0:
-                if D[idx-1] < (1+Kappa)*dist:
-                    idx = idx-1
-                    dist = D[idx]
-            #Scale by power ratio
-            SBp[:, k] = SAp[:, idx]*MagSB[k]/MagSA[idx]
+        #SBp = doSpectrogramAnalogiesSimple(SA, SAp, SB, Kappa = 5)
+        SBp = doSpectrogramAnalogies(SA, SAp, SB, T, Fs)
         SBpFinal += SBp
-
         y = griffinLimInverse(SBp, winSize, hopSize)
         y = y/np.max(np.abs(y))
         wavfile.write("%s/Bp%i.wav"%(foldername, i), Fs, y)
@@ -418,12 +405,12 @@ def testNMF2DMusic(AllJoint = False):
     B = B[Fs*3:Fs*23]
 
     XSizes = {}
-    ZoomFac = 8 #Scaling factor so that each window is approximately 10ms
 
     bins_per_octave = 24
     hopSize = int(np.round(Fs/100.0)) #For librosa display to know approximate timescale
-    K = 8
-    T = 12
+    ZoomFac = 8 #Scaling factor so that each window is approximately 10ms
+    K = 2
+    T = 24
     F = 36
     NIters = 440
 
@@ -455,7 +442,8 @@ def testNMF2DMusic(AllJoint = False):
         plotfn = lambda A, Ap, B, W1, W2, H1, H2, iter, errs: \
             plotNMF2DConvSpectraJoint3Way(A, Ap, B, W1, W2, H1, H2, iter, errs,\
             hopLength = hopSize, audioParams=audioParams, useGPU = True)
-        (W1, W2, H1, H2) = doNMF2DConvJointGPU(CA, CAp, CB, K, T, F, L=NIters, plotfn=plotfn)
+        (W1, W2, H1, H2) = doNMF2DConvJointGPU(CA, CAp, CB, K, T, F, L=NIters, \
+            plotfn=plotfn, plotInterval = NIters*2)
         sio.savemat("SmoothCriminalAllNMF2DJoint.mat", {"W1":W1, "W2":W2, "H1":H1, "H2":H2})
         #res = sio.loadmat("SmoothCriminalAllNMF2DJoint.mat")
         #[W1, W2, H1, H2] = [res['W1'], res['W2'], res['H1'], res['H2']]
@@ -471,13 +459,15 @@ def testNMF2DMusic(AllJoint = False):
         plotfn = lambda V, W, H, iter, errs: \
             plotNMF2DConvSpectraJoint(V, W, H, iter, errs, \
             hopLength = hopSize, audioParams = audioParams)
-        (W, H1) = doNMF2DConvGPU(C, K, T, F, L=NIters, plotfn = plotfn, joint = True, plotInterval=150)
+        (W, H1) = doNMF2DConvGPU(C, K, T, F, L=NIters, plotfn = plotfn, \
+                                joint = True, plotInterval=NIters*2)
         #Represent B in the dictionary of A
         W1 = W[:, 0:N, :]
         W2 = W[:, 0:N, :]
         plotfn = lambda V, W, H, iter, errs: \
             plotNMF2DConvSpectra(V, W, H, iter, errs, hopLength = hopSize)
-        (W, H2) = doNMF2DConvGPU(CB, K, T, F, W=W1, L=NIters, plotfn=plotfn)
+        (W, H2) = doNMF2DConvGPU(CB, K, T, F, W=W1, L=NIters, \
+                                plotfn=plotfn, plotInterval=NIters*2)
         sio.savemat("SmoothCriminalNMF2DJoint.mat", {"W1":W1, "W2":W2, "H1":H1, "H2":H2})
         #res = sio.loadmat("SmoothCriminalNMF2DJoint.mat")
         #[W1, W2, H1, H2] = [res['W1'], res['W2'], res['H1'], res['H2']]
@@ -495,6 +485,55 @@ def testNMF2DMusic(AllJoint = False):
     audioParams['XSize'] = XSizes['B']
     getComplexNMF2DTemplates(CBOrig, W1, H2, ZoomFac, p = 2, audioParams = audioParams)
 
+def testDreidgerTranslate():
+    import librosa
+    from scipy.io import wavfile
+    hopSize = 256
+    winSize = 2048
+    NIters = 100
+    shiftrange = 6
+
+    #Step 1: Load in A, Ap, and B
+    SsA = []
+    SsB = []
+    SsAp = []
+    for i in range(2):
+        print("Loading i = %i"%i)
+        Fs, A = sio.wavfile.read("Example/A_%i.wav"%i)
+        SsA.append(getPitchShiftedSpecs(A, Fs, winSize, hopSize, shiftrange=shiftrange))
+        Fs, B = sio.wavfile.read("Example/B_%i.wav"%i)
+        SsB.append(STFT(B, winSize, hopSize))
+        Fs, Ap = sio.wavfile.read("Example/Ap_%i.wav"%i)
+        SsAp.append(getPitchShiftedSpecs(Ap, Fs, winSize, hopSize, shiftrange=shiftrange))
+    
+    #Step 2: Do NMF Dreidger on one track at a time
+    fn = lambda V, W, H, iter, errs: plotNMFSpectra(V, W, H, iter, errs, hopSize)
+    XFinal = np.array([])
+    for i in range(2):
+        print("Doing track %i..."%i)
+        HFilename = "Example/H%i.mat"%i
+        if not os.path.exists(HFilename):
+            H = doNMFDreidger(np.abs(SsB[i]), np.abs(SsA[i]), NIters, \
+            r = 7, p = 10, c = 0, plotfn = fn)
+            sio.savemat("Example/H%i.mat"%i, {"H":H})
+        else:
+            H = sio.loadmat(HFilename)["H"]
+        H = np.array(H, dtype=np.complex)
+        S = SsA[i].dot(H)
+        X = griffinLimInverse(S, winSize, hopSize)
+        wavfile.write("Example/B%i_Dreidger.wav"%i, Fs, X)
+        S = SsAp[i].dot(H)
+        X = griffinLimInverse(S, winSize, hopSize)
+        wavfile.write("Example/Bp%i.wav"%i, Fs, X)
+        if XFinal.size == 0:
+            XFinal = X
+        else:
+            XFinal += X
+    wavfile.write("Example/BpFinal.wav", Fs, XFinal)
+    
+
+    
+
 
 if __name__ == '__main__':
     #testNMFMusaicingSimple()
@@ -506,3 +545,4 @@ if __name__ == '__main__':
     #testNMF1DTranslate()
     #testNMF2DConvJointSynthetic()
     testNMF2DMusic(AllJoint = False)
+    #testDreidgerTranslate()

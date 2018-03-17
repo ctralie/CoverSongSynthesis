@@ -150,10 +150,14 @@ def doNMFDreidger(V, W, L, r = 7, p = 10, c = 3, plotfn = None):
                 C[np.diag(I, k), np.diag(J, k)] = x2
         #KL Divergence Version
         tic = time.time()
-        VLam = V/(W.dot(C))
+        WC = W.dot(C)
+        WC[WC == 0] = 1
+        VLam = V/WC
         print("VLam Elapsed Time: %.3g"%(time.time() - tic))
         tic = time.time()
-        H = C*((W.T).dot(VLam)/np.sum(W, 0)[:, None])
+        WDenom = np.sum(W, 0)
+        WDenom[WDenom == 0] = 1
+        H = C*((W.T).dot(VLam)/WDenom[:, None])
         print("Elapsed Time H Update %.3g"%(time.time() - tic))
         errs.append(getKLError(V, W.dot(H)))
         if plotfn and ((l+1)==L or (l+1)%20 == 0):
@@ -762,6 +766,7 @@ def plotNMF2DConvSpectraJoint(V, W, H, iter, errs, hopLength = -1, plotComponent
         K = 0
 
     N = int(W.shape[1]/2)
+    T = W.shape[0]
     W1 = W[:, 0:N, :]
     W2 = W[:, N::, :]
     V1 = V[0:N, :]
@@ -781,6 +786,7 @@ def plotNMF2DConvSpectraJoint(V, W, H, iter, errs, hopLength = -1, plotComponent
             os.mkdir(pre)
         #Invert the audio
         if bins_per_octave > -1:
+            #Step 1: Invert the approximations
             for (s1, Lam) in zip(["A", "Ap"], [WH[0:N, :], WH[N::, :]]):
                 print("%s.size = %i"%(s1, XSizes[s1]))
                 LamZoom = scipy.ndimage.interpolation.zoom(Lam, (1, ZoomFac))
@@ -788,6 +794,19 @@ def plotNMF2DConvSpectraJoint(V, W, H, iter, errs, hopLength = -1, plotComponent
                     bins_per_octave, NIters=100, randPhase = True)
                 y_hat = y_hat/np.max(np.abs(y_hat))
                 sio.wavfile.write("%s/%s.wav"%(pre, s1), Fs, y_hat)
+            #Step 2: Invert the templates
+            for (s1, thisW) in zip(["A", "Ap"], (W1, W2)):
+                #Zeropad to avoid a headache figuring out the proper lengths in Nakamura's code
+                C = np.zeros(V1.shape)
+                for k in range(K):
+                    for r in range(20):
+                        C[:, T*r:T*(r+1)] = thisW[:, :, k].T
+                    CZoom = scipy.ndimage.interpolation.zoom(C, (1, ZoomFac))
+                    CZoom = np.array(CZoom, np.complex)
+                    (y_hat, spec) = getiCQTGriffinLimNakamuraMatlab(eng, CZoom, XSizes[s1], Fs, \
+                        bins_per_octave, NIters=100, randPhase = True)
+                    y_hat = y_hat/np.max(np.abs(y_hat))
+                    sio.wavfile.write("%s/%s_W%i.wav"%(pre, s1, k), Fs, y_hat)
 
     plt.subplot(3, 2+K, 1)
     if hopLength > -1:

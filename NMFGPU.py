@@ -176,7 +176,7 @@ def makeRandomGPUArray(M, N, L):
     return gpuarray.to_gpu(np.array(np.random.rand(M, N, L), dtype=np.float32))
 
 def doNMF2DConvGPU(V, K, T, F, L, W = np.array([]), plotfn = None, \
-    joint = False, prefix = "", plotInterval = 60):
+    joint = False, prefix = "", plotInterval = 60, plotFirst = False):
     """
     Implementing the Euclidean 2D NMF technique described in 
     "Nonnegative Matrix Factor 2-D Deconvolution
@@ -224,8 +224,13 @@ def doNMF2DConvGPU(V, K, T, F, L, W = np.array([]), plotfn = None, \
             plt.figure(figsize=((4+pK)*res, 3*res))
         else:
             plt.figure(figsize=((4+pK)*res, res))
-        plotfn(V.get(), W.get(), H.get(), 0, errs) 
-        plt.savefig("NMF2DConv_%i.png"%0, bbox_inches = 'tight')
+        if plotFirst:
+            plotfn(V.get(), W.get(), H.get(), 0, errs) 
+            if joint:
+                pre = "%sNMF2DJointIter%i"%(prefix, 0)
+                plt.savefig("%s/NMF2DConv_%i.png"%(pre, 0), bbox_inches = 'tight')
+            else:
+                plt.savefig("NMF2DConv_%i.png"%0, bbox_inches = 'tight')
     for l in range(L):
         print("NMF iteration %i of %i"%(l+1, L))
         tic = time.time()
@@ -248,12 +253,12 @@ def doNMF2DConvGPU(V, K, T, F, L, W = np.array([]), plotfn = None, \
             errs.append(getEuclideanErrorGPU(V, WH))
         if plotfn and ((l+1) == L or (l+1)%plotInterval == 0):
             plt.clf()
-            plotfn(V, W, H, l+1, errs)
+            plotfn(V.get(), W.get(), H.get(), l+1, errs)
             if joint:
                 pre = "%sNMF2DJointIter%i"%(prefix, l+1)
-                plt.savefig("%s/NMF1DConv_%i.png"%(pre, l+1), bbox_inches = 'tight')
+                plt.savefig("%s/NMF2DConv_%i.png"%(pre, l+1), bbox_inches = 'tight')
             else:
-                plt.savefig("NMF1DConv_%i.png"%(l+1), bbox_inches = 'tight')
+                plt.savefig("NMF2DConv_%i.png"%(l+1), bbox_inches = 'tight')
         print("Elapsed Time: %.3g"%(time.time()-tic))
     return (W.get(), H.get())
 
@@ -263,7 +268,8 @@ def getJointEuclideanErrorGPU(A, Ap, B, W1, W2, H1, H2):
     res += getEuclideanErrorGPU(B, multiplyConv2DGPU(W1, H2))
     return res
 
-def doNMF2DConvJointGPU(A, Ap, B, K, T, F, L, plotfn = None, prefix = "", plotFirst = False):
+def doNMF2DConvJointGPU(A, Ap, B, K, T, F, L, plotfn = None, prefix = "", \
+        plotInterval = 60, plotFirst = False):
     """
     Implementing the Euclidean 2D NMF technique described in 
     "Nonnegative Matrix Factor 2-D Deconvolution
@@ -342,7 +348,7 @@ def doNMF2DConvJointGPU(A, Ap, B, K, T, F, L, plotfn = None, prefix = "", plotFi
 
         errs.append(getJointEuclideanErrorGPU(A, Ap, B, W1, W2, H1, H2))
         print("Elapsed Time: %.3g"%(time.time()-tic))
-        if plotfn and (l+1) == L:
+        if plotfn and ((l+1) == L or (l+1)%plotInterval == 0):
             plt.clf()
             plotfn(A.get(), Ap.get(), B.get(), W1.get(), W2.get(), H1.get(), H2.get(), l+1, errs)
             pre = "%sNMFJointIter%i"%(prefix, l+1)

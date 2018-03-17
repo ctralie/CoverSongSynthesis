@@ -143,7 +143,7 @@ def unwarpSTFTMel(X, Fs, winSize):
     M = M/MEnergy[None, :]
     return (M.T).dot(X)
 
-def getPitchShiftedSpecs(X, Fs, W, H, shiftrange = 6):
+def getPitchShiftedSpecs(X, Fs, W, H, shiftrange = 6, GapWins = 20):
     """
     Concatenate a bunch of pitch shifted versions of the spectrograms
     of a sound, using the rubberband library
@@ -163,10 +163,11 @@ def getPitchShiftedSpecs(X, Fs, W, H, shiftrange = 6):
         else:
             Y = pyrb.pitch_shift(X, Fs, shift)
         S = STFT(Y, W, H)
+        Gap = np.zeros((S.shape[0], GapWins), dtype=np.complex)
         if SRet.size == 0:
             SRet = S
         else:
-            SRet = np.concatenate((SRet, S), 1)
+            SRet = np.concatenate((SRet, Gap, S), 1)
     return SRet
 
 def griffinLimInverse(S, W, H, NIters = 10, winfunc = None):
@@ -210,8 +211,6 @@ if __name__ == '__main__':
     y = pyrb.pitch_shift(X, Fs, shift)
     wavfile.write("rubberbandshift%i.wav"%shift, Fs, y)
     testPitchShift(X, Fs, 2048, 128, shift, "gfshift%i_stft.wav"%shift)
-    testPitchShiftCQT(y, Fs, 128, 36, shift, \
-            "gfshift%i_cqt_%ioctaves.wav"%(shift, noctaves), noctaves)
 
     from NMF import shiftMatLRUD
     winSize = 4096
