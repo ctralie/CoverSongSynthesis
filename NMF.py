@@ -119,6 +119,7 @@ def doNMFDreidger(V, W, L, r = 7, p = 10, c = 3, plotfn = None):
     K = W.shape[1]
     tic = time.time()
     H = np.random.rand(K, M)
+    print("H.shape = ", H.shape)
     print("Time elapsed H initializing: %.3g"%(time.time() - tic))
     errs = [getKLError(V, W.dot(H))]
     if plotfn:
@@ -134,33 +135,33 @@ def doNMFDreidger(V, W, L, r = 7, p = 10, c = 3, plotfn = None):
         print("NMF Dreidger iteration %i of %i"%(l+1, L))   
         iterfac = 1-float(l+1)/L       
         #Step 1: Avoid repeated activations
+        print("Doing Repeated Activations...")
         MuH = scipy.ndimage.filters.maximum_filter(H, size=(1, r))
-        R = np.array(H)
-        R[R<MuH] = R[R<MuH]*iterfac
+        H[H<MuH] = H[H<MuH]*iterfac
         #Step 2: Restrict number of simultaneous activations
-        colCutoff = -np.sort(-R, 0)[p, :]
-        P = np.array(R)
-        P[P < colCutoff[None, :]] = P[P < colCutoff[None, :]]*iterfac
+        print("Restricting simultaneous activations...")
+        colCutoff = -np.sort(-H, 0)[p, :]
+        H[H < colCutoff[None, :]] = H[H < colCutoff[None, :]]*iterfac
         #Step 3: Supporting time-continuous activations
-        C = np.array(P)
         if c > 0:
-            for k in range(-C.shape[0]+1, C.shape[1]):
-                z = np.cumsum(np.concatenate((np.zeros(c), np.diag(C, k), np.zeros(c))))
+            print("Supporting time-continuous activations...")
+            for k in range(-H.shape[0]+1, H.shape[1]):
+                z = np.cumsum(np.concatenate((np.zeros(c), np.diag(H, k), np.zeros(c))))
                 x2 = z[2*c::] - z[0:-2*c]
-                C[np.diag(I, k), np.diag(J, k)] = x2
+                H[np.diag(I, k), np.diag(J, k)] = x2
         #KL Divergence Version
         tic = time.time()
-        WC = W.dot(C)
-        WC[WC == 0] = 1
-        VLam = V/WC
+        WH = W.dot(H)
+        WH[WH == 0] = 1
+        VLam = V/WH
         print("VLam Elapsed Time: %.3g"%(time.time() - tic))
         tic = time.time()
         WDenom = np.sum(W, 0)
         WDenom[WDenom == 0] = 1
-        H = C*((W.T).dot(VLam)/WDenom[:, None])
+        H = H*((W.T).dot(VLam)/WDenom[:, None])
         print("Elapsed Time H Update %.3g"%(time.time() - tic))
         errs.append(getKLError(V, W.dot(H)))
-        if plotfn and ((l+1)==L or (l+1)%20 == 0):
+        if plotfn and ((l+1)==L):# or (l+1)%20 == 0):
             plt.clf()
             plotfn(V, W, H, l+1, errs)
             plt.savefig("NMDreidger_%i.png"%(l+1), bbox_inches = 'tight')
@@ -340,8 +341,7 @@ def doNMF1DConv(V, K, T, L, r = 0, p = -1, W = np.array([]), plotfn = None, plot
             plt.clf()
             plotfn(V, W, H, l+1, errs)
             if joint:
-                pre = "%sNMF1DJointIter%i"%(prefix, l+1)
-                plt.savefig("%s/NMF1DConv_%i.png"%(pre, l+1), bbox_inches = 'tight')
+                plt.savefig("%s/NMF1DConv_%i.png"%(prefix, l+1), bbox_inches = 'tight')
             else:
                 plt.savefig("NMF1DConv_%i.png"%(l+1), bbox_inches = 'tight')
     return (W, H)
@@ -385,7 +385,9 @@ def getComplexNMF1DTemplates(S, W, H, p = 2, audioParams = None):
         from scipy.io import wavfile
         X = np.array([])
         for k in range(K):
-            Xk = iSTFT(Ss[k], winSize, hopSize)
+            thisS = np.array(Ss[k])
+            thisS[:, Ratios[k] < 0.05] = 0
+            Xk = iSTFT(thisS, winSize, hopSize)
             if k == 0:
                 X = Xk
             else:
@@ -393,7 +395,7 @@ def getComplexNMF1DTemplates(S, W, H, p = 2, audioParams = None):
             wavfile.write("%s_%i.wav"%(fileprefix, k), Fs, Xk)
             plt.clf()
             plt.plot(Ratios[k])
-            plt.title("Ratio, %.3g Above 0.1"%(np.sum(Ratios[k] > 0.1)/Ratios[k].size))
+            plt.title("Ratio, %.3g Above 0.05"%(np.sum(Ratios[k] > 0.05)/float(Ratios[k].size)))
             plt.savefig("%s_%iPower.svg"%(fileprefix, k), bbox_inches = 'tight')
         wavfile.write("%sNMF.wav"%fileprefix, Fs, X)
     return (Ss, Ratios)

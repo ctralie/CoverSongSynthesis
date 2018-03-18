@@ -143,7 +143,7 @@ def unwarpSTFTMel(X, Fs, winSize):
     M = M/MEnergy[None, :]
     return (M.T).dot(X)
 
-def getPitchShiftedSpecs(X, Fs, W, H, shiftrange = 6, GapWins = 20):
+def getPitchShiftedSpecs(X, Fs, W, H, shiftrange = 6, GapWins = 10):
     """
     Concatenate a bunch of pitch shifted versions of the spectrograms
     of a sound, using the rubberband library
@@ -192,6 +192,53 @@ def griffinLimInverse(S, W, H, NIters = 10, winfunc = None):
         A = np.abs(S)*(A/Norm)
     X = iSTFT(A, W, H, winfunc)
     return np.real(X)
+
+def getPitchShiftedSpecsFromSpec(S, Fs, W, H, shiftrange = 6, GapWins = 10):
+    """
+    Same as getPitchShiftedSpecs, except input a spectrogram, which needs
+    to be inverted, instead of a sound
+    """
+    X = griffinLimInverse(S, W, H)
+    return getPitchShiftedSpecs(X, Fs, W, H, shiftrange, GapWins)
+
+def ThresholdSpecs(SA, SAp, Ratios, cutoff, gap = 10, debugPlot = False):
+    """
+    Threshold two corresponding spectrograms from A and A' based on the power
+    ratios for A.  This is to save memory by eliminating runs of blank frames
+    :param SA: An NxT complex array of spectrogram frames
+    :param Ratios: A 1D T-length array of power ratios for the spectrogram
+    :param cutoff: Ratio cutoff
+    :param gap: The maximum length of a gap to leave in the final template
+    """
+    import scipy.signal
+    N = Ratios.size
+    above = np.ones(N)
+    above[Ratios < cutoff] = 0
+    above = scipy.signal.medfilt(above, 3)
+    toKeep = np.ones(N)
+    i0 = 0
+    (IN_ZEROS, IN_ONES) = (0, 1)
+    state = IN_ZEROS
+    i0 = 0
+    if above[0] == 1:
+        state = IN_ONES
+    for i in range(1, N):
+        if above[i] == 0:
+            if state == IN_ONES:
+                i0 = i
+                state = IN_ZEROS
+        else:
+            if state == IN_ZEROS:
+                T = i-i0+1
+                if T > gap:
+                    toKeep[i0:i-gap] = 0
+                state = IN_ONES
+    if debugPlot:
+        plt.plot(Ratios, 'b')
+        plt.plot(1.2*toKeep, 'r')
+        plt.ylim([0, 1.3])
+        plt.title("ToKeep: %.3g Percent"%(100.0*np.sum(toKeep)/N))
+    return (SA[:, toKeep == 1], SAp[:, toKeep == 1])
 
 def testPitchShift(X, Fs, W, H, shift, filename):
     W = 2048
