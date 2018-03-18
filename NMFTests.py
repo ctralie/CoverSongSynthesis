@@ -59,18 +59,16 @@ def testNMF2DConvSynthetic():
     V[6+np.arange(T), 20+np.arange(T)] = 1
     V[10-np.arange(T), 22+np.arange(T)] = 0.5
     V[10+np.arange(T), 10+np.arange(T)] += 0.7
-    doNMF2DConvGPU(V, K, T, F, L, plotfn=plotNMF2DConvSpectra)
-    doNMF1DConv(V, K, T, L, plotfn=plotNMF1DConvSpectra)
+    doNMF2DConv(V, K, T, F, L, doKL = True, plotfn=plotNMF2DConvSpectra)
+    #doNMF1DConv(V, K, T, L, plotfn=plotNMF1DConvSpectra)
 
-def testNMF2DConvJointSynthetic():
-    initParallelAlgorithms()
-    np.random.seed(300)
+def get2DSyntheticJointExample():
     T = 10
     F = 10
     K = 3
     M = 20
-    N1 = 60
-    N2 = 40
+    N = 60
+    
     W1 = np.zeros((T, M, K))
     W2 = np.zeros((T, M, K))
     #Pattern 1: A tall block in A that goes to a fat block in A'
@@ -98,20 +96,39 @@ def testNMF2DConvJointSynthetic():
     J = J[idx]
     W2[J, I, 2] = 1
 
-    H1 = np.zeros((F, K, N1))
-    H1[9, 0, [3, 15, 50]] = 1
-    H1[0, 0, 27] = 1
+    H = np.zeros((F, K, N))
+    H[9, 0, [3, 15, 50]] = 1
+    H[0, 0, 27] = 1
     
     #3 diagonal lines in a row, then a gap, then 3 in a row pitch shifted
-    H1[0, 1, [5, 15, 25]] = 1
-    H1[0, 1, [35, 45, 55]] = 1
+    H[0, 1, [5, 15, 25]] = 1
+    H[0, 1, [35, 45, 55]] = 1
 
     #Squares and circles moving down then up
-    H1[1, 2, [0, 48]] = 1
-    H1[4, 2, [12, 36]] = 1
-    H1[8, 2, 24] = 1
+    H[1, 2, [0, 48]] = 1
+    H[4, 2, [12, 36]] = 1
+    H[8, 2, 24] = 1
 
+    return {'W1':W1, 'W2':W2, 'H':H, 'T':T, 'F':F, 'K':K, 'M':M, 'N':N}
 
+def testNMF2DConvJointSynthetic():
+    initParallelAlgorithms()
+    L = 200
+    res = get2DSyntheticJointExample()
+    [W1, W2, H, T, F, K] = \
+        [res['W1'], res['W2'], res['H'], res['T'], res['F'], res['K']]
+    A = multiplyConv2D(W1, H)
+    Ap = multiplyConv2D(W2, H)
+    doNMF2DConvJoint(A, Ap, K, T, F, L, plotfn=plotNMF2DConvSpectraJoint)
+    #doNMF1DConv(V, K, T, L, plotfn=plotNMF1DConvSpectra)
+
+def testNMF2DConvJoint3WaySynthetic():
+    initParallelAlgorithms()
+    np.random.seed(300)
+    N2 = 40
+    res = get2DSyntheticJointExample()
+    [W1, W2, H1, T, F, K] = \
+        [res['W1'], res['W2'], res['H'], res['T'], res['F'], res['K']]
     H2 = np.random.rand(F, K, N2)
     H2[H2 > 0.98] = 1
     H2[H2 < 1] = 0
@@ -120,7 +137,7 @@ def testNMF2DConvJointSynthetic():
     Ap = multiplyConv2D(W2, H1)
     B = multiplyConv2D(W1, H2)
 
-    doNMF2DConvJointGPU(A, Ap, B, K, T, F, 200, plotfn = plotNMF2DConvSpectraJoint3Way)
+    doNMF2DConvJoint3WayGPU(A, Ap, B, K, T, F, 200, plotfn = plotNMF2DConvSpectraJoint3Way)
 
 def outputNMFSounds(U1, U2, winSize, hopSize, Fs, fileprefix):
     for k in range(U1.shape[1]):
@@ -134,6 +151,11 @@ def outputNMFSounds(U1, U2, winSize, hopSize, Fs, fileprefix):
         sio.wavfile.write("%s%i.wav"%(fileprefix, k), Fs, X)
 
 def testNMFJointSmoothCriminal():
+    """
+    Trying out the technique in
+    [1] "Multi-View Clustering via Joint Nonnegative Matrix Factorization"
+        Jialu Liu, Chi Wang, Ning Gao, Jiawei Han
+    """
     Fs, X = sio.wavfile.read("music/SmoothCriminalAligned.wav")
     X1 = X[:, 0]/(2.0**15)
     X2 = X[:, 1]/(2.0**15)
@@ -219,7 +241,7 @@ def testNMF1DMusic():
     foldername = "1DNMFResults"
     if not os.path.exists(foldername):
         os.mkdir(foldername)
-    K = 8
+    K = 5
     T = 16
     NIters = 80
     hopSize = 256
@@ -245,8 +267,7 @@ def testNMF1DMusic():
         res = sio.loadmat(filename)
         [W, H] = [res['W'], res['H']]
     else:
-        (W, H) = doNMF1DConv(S, K, T, NIters, joint = True, \
-                                prefix=foldername, plotfn=plotfn)
+        (W, H) = doNMF1DConvJoint(S, K, T, NIters, prefix=foldername, plotfn=plotfn)
         sio.savemat(filename, {"W":W, "H":H})
     W1 = W[:, 0:N, :]
     W2 = W[:, N::, :]
@@ -346,9 +367,9 @@ def testNMF1DMusic():
     
 
 
-def testNMF2DMusic(AllJoint = False):
+def testNMF2DMusic(Joint3Way = False):
     """
-    :param joint: If true, do a joint embedding with A, Ap, and B\
+    :param Joint3Way: If true, do a joint embedding with A, Ap, and B\
         If false, then do a joint embedding with (A, Ap) and represent\
         B in the A dictionary
     """
@@ -403,12 +424,12 @@ def testNMF2DMusic(AllJoint = False):
     audioParams={'Fs':Fs, 'bins_per_octave':bins_per_octave, \
                 'prefix':'', 'eng':eng, 'XSizes':XSizes, "ZoomFac":ZoomFac}
 
-    if AllJoint:
+    if Joint3Way:
         #Do joint 2DNMF
         plotfn = lambda A, Ap, B, W1, W2, H1, H2, iter, errs: \
             plotNMF2DConvSpectraJoint3Way(A, Ap, B, W1, W2, H1, H2, iter, errs,\
             hopLength = hopSize, audioParams=audioParams, useGPU = True)
-        (W1, W2, H1, H2) = doNMF2DConvJointGPU(CA, CAp, CB, K, T, F, L=NIters, \
+        (W1, W2, H1, H2) = doNMF2DConvJoint3WayGPU(CA, CAp, CB, K, T, F, L=NIters, \
             plotfn=plotfn, plotInterval = NIters*2)
         sio.savemat("SmoothCriminalAllNMF2DJoint.mat", {"W1":W1, "W2":W2, "H1":H1, "H2":H2})
         #res = sio.loadmat("SmoothCriminalAllNMF2DJoint.mat")
@@ -507,7 +528,8 @@ if __name__ == '__main__':
     #testNMFJointSmoothCriminal()
     #testNMF1DConvSynthetic()
     #testNMF2DConvSynthetic()
-    #testNMF2DConvJointSynthetic()
-    testNMF1DMusic()
-    #testNMF2DMusic(AllJoint = False)
+    testNMF2DConvJointSynthetic()
+    #testNMF2DConvJoint3WaySynthetic()
+    #testNMF1DMusic()
+    #testNMF2DMusic(Joint3Way = False)
     #testDreidgerTranslate()

@@ -11,6 +11,7 @@ import time
 import scipy.io as sio
 import pkg_resources
 from NMF import *
+from NMFJoint import *
 
 def getResourceString(filename):
     fin = open(filename)
@@ -176,7 +177,7 @@ def makeRandomGPUArray(M, N, L):
     return gpuarray.to_gpu(np.array(np.random.rand(M, N, L), dtype=np.float32))
 
 def doNMF2DConvGPU(V, K, T, F, L, W = np.array([]), plotfn = None, \
-    joint = False, prefix = "", plotInterval = 60, plotFirst = False):
+    plotInterval = 60, plotFirst = False):
     """
     Implementing the Euclidean 2D NMF technique described in 
     "Nonnegative Matrix Factor 2-D Deconvolution
@@ -191,9 +192,6 @@ def doNMF2DConvGPU(V, K, T, F, L, W = np.array([]), plotfn = None, \
     :param plotfn: A function used to plot each iteration, which should\
         take the arguments (V, W, H, iter) (assumed to take CPU arrays, \
         so conversion will be done in the function)
-    :param joint: If true, it's understood that V and W are two songs concatenated\
-        on top of each other.  Functionality is the same, but errors are computed\
-        separately, and plotting is done differently
     :param plotInterval: At what interval to save plots of progress
     :returns (W, H): \
         W is an TxNxK CPU matrix of K sources over spatiotemporal spans NxT\
@@ -211,26 +209,14 @@ def doNMF2DConvGPU(V, K, T, F, L, W = np.array([]), plotfn = None, \
         W = gpuarray.to_gpu(np.array(W, dtype=np.float32))
     H = makeRandomGPUArray(F, K, M)
     WH = multiplyConv2DGPU(W, H)
-    if joint:
-        N1 = int(N/2)
-        errs = [[getEuclideanErrorGPU(V[0:N1, :], WH[0:N1, :]), \
-            getEuclideanErrorGPU(V[N1::, :], WH[N1::, :])]]
-    else:
-        errs = [getEuclideanErrorGPU(V, WH)]
+    errs = [getEuclideanErrorGPU(V, WH)]
     if plotfn:
         res=4
         pK = K
-        if joint:
-            plt.figure(figsize=((4+pK)*res, 3*res))
-        else:
-            plt.figure(figsize=((4+pK)*res, res))
+        plt.figure(figsize=((4+pK)*res, res))
         if plotFirst:
             plotfn(V.get(), W.get(), H.get(), 0, errs) 
-            if joint:
-                pre = "%sNMF2DJointIter%i"%(prefix, 0)
-                plt.savefig("%s/NMF2DConv_%i.png"%(pre, 0), bbox_inches = 'tight')
-            else:
-                plt.savefig("NMF2DConv_%i.png"%0, bbox_inches = 'tight')
+            plt.savefig("NMF2DConv_%i.png"%0, bbox_inches = 'tight')
     for l in range(L):
         print("NMF iteration %i of %i"%(l+1, L))
         tic = time.time()
@@ -245,35 +231,19 @@ def doNMF2DConvGPU(V, K, T, F, L, W = np.array([]), plotfn = None, \
         HFac = multiplyConv2DHGradGPU(W, H, V, VLam)
         H = skcuda.misc.multiply(H, HFac)
         WH = multiplyConv2DGPU(W, H)
-        if joint:
-            N1 = int(N/2)
-            errs.append([getEuclideanErrorGPU(V[0:N1, :], WH[0:N1, :]), \
-                    getEuclideanErrorGPU(V[N1::, :], WH[N1::, :])])
-        else:
-            errs.append(getEuclideanErrorGPU(V, WH))
+        errs.append(getEuclideanErrorGPU(V, WH))
         if plotfn and ((l+1) == L or (l+1)%plotInterval == 0):
             plt.clf()
             plotfn(V.get(), W.get(), H.get(), l+1, errs)
-            if joint:
-                pre = "%sNMF2DJointIter%i"%(prefix, l+1)
-                plt.savefig("%s/NMF2DConv_%i.png"%(pre, l+1), bbox_inches = 'tight')
-            else:
-                plt.savefig("NMF2DConv_%i.png"%(l+1), bbox_inches = 'tight')
+            plt.savefig("NMF2DConv_%i.png"%(l+1), bbox_inches = 'tight')
         print("Elapsed Time: %.3g"%(time.time()-tic))
     return (W.get(), H.get())
 
-def getJointEuclideanErrorGPU(A, Ap, B, W1, W2, H1, H2):
-    res = getEuclideanErrorGPU(A, multiplyConv2DGPU(W1, H1))
-    res += getEuclideanErrorGPU(Ap, multiplyConv2DGPU(W2, H1))
-    res += getEuclideanErrorGPU(B, multiplyConv2DGPU(W1, H2))
-    return res
-
-def doNMF2DConvJointGPU(A, Ap, B, K, T, F, L, plotfn = None, prefix = "", \
+def doNMF2DConvJoint3WayGPU(A, Ap, B, K, T, F, L, plotfn = None, prefix = "", \
         plotInterval = 60, plotFirst = False):
     """
-    Implementing the Euclidean 2D NMF technique described in 
-    "Nonnegative Matrix Factor 2-D Deconvolution
-        for Blind Single Channel Source Separation"
+    A version of 2DNMF that jointly solves for W1, H1, W2, and H2 that
+    satisfy W1*H1 ~= A, W2*H1 ~= Ap, and W2*H1 ~= B
     :param A: An M x N1 matrix for song A
     :param Ap: An M x N1 matrix for song A'
     :param B: An M x N2 matrix for song B
@@ -304,13 +274,13 @@ def doNMF2DConvJointGPU(A, Ap, B, K, T, F, L, plotfn = None, prefix = "", \
     Ap = gpuarray.to_gpu(np.array(Ap, dtype=np.float32))
     B = gpuarray.to_gpu(np.array(B, dtype=np.float32))
 
-    errs = [getJointEuclideanErrorGPU(A, Ap, B, W1, W2, H1, H2)]
+    errs = [getJoint3WayError(A, Ap, B, W1, W2, H1, H2, getEuclideanErrorGPU, multiplyConv2DGPU)]
     if plotfn:
         res=4
         plt.figure(figsize=((8+2*K)*res*1.2, 2*res))
         if plotFirst:
             plotfn(A.get(), Ap.get(), B.get(), W1.get(), W2.get(), H1.get(), H2.get(), 0, errs)
-            pre = "%sNMFJointIter%i"%(prefix, 0)
+            pre = "%sNMFJoint3WayIter%i"%(prefix, 0)
             plt.savefig("%s/NMF2DConvJoint_%i.png"%(pre, 0), bbox_inches = 'tight')
     for l in range(L):
         print("Joint 2DNMF iteration %i of %i"%(l+1, L))
@@ -346,12 +316,12 @@ def doNMF2DConvJointGPU(A, Ap, B, K, T, F, L, plotfn = None, prefix = "", \
         Fac = multiplyConv2DHGradGPU(W1, H2, B, Lam12, doDivision = True)
         H2 = skcuda.misc.multiply(H2, Fac)
 
-        errs.append(getJointEuclideanErrorGPU(A, Ap, B, W1, W2, H1, H2))
+        errs.append(getJoint3WayError(A, Ap, B, W1, W2, H1, H2, getEuclideanErrorGPU, multiplyConv2DGPU))
         print("Elapsed Time: %.3g"%(time.time()-tic))
         if plotfn and ((l+1) == L or (l+1)%plotInterval == 0):
             plt.clf()
             plotfn(A.get(), Ap.get(), B.get(), W1.get(), W2.get(), H1.get(), H2.get(), l+1, errs)
-            pre = "%sNMFJointIter%i"%(prefix, l+1)
+            pre = "%sNMFJoint3WayIter%i"%(prefix, l+1)
             plt.savefig("%s/NMF2DConvJoint_%i.png"%(pre, l+1), bbox_inches = 'tight')
     return (W1.get(), W2.get(), H1.get(), H2.get())
 
