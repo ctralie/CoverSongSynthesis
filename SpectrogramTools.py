@@ -83,6 +83,8 @@ def pitchShiftSTFT(S, Fs, shift):
     :param shift: Number of halfsteps by which to shift
     :returns: An NFreqsxNWindows shifted spectrogram
     """
+    if shift == 0:
+        return S
     M = S.shape[0]
     N = S.shape[1]
     bins0 = np.arange(M)
@@ -90,9 +92,6 @@ def pitchShiftSTFT(S, Fs, shift):
     freqs1 = freqs0*2.0**(-shift/12.0)
     bins1 = (freqs1/Fs)*M
     wins = np.arange(N)
-    print("freqs0.shape = ", freqs0.shape)
-    print("wins.shape = ", wins.shape)
-    print("S.shape = ", S.shape)
     f = scipy.interpolate.interp2d(wins, freqs0, S, kind = 'linear')
     return f(wins, freqs1)
 
@@ -129,6 +128,20 @@ def getMelFilterbank(Fs, winSize, noctaves = 7, binsperoctave = 24):
         melfbank[i-1, thisbin:rbin+1] = np.linspace(1, 0, 1 + (rbin - thisbin))
     melfbank = melfbank/np.sum(melfbank, 1)[:, None]
     return melfbank
+
+def getMFCCsFromSpec(S, Fs, NBands = 40, fmax = 8000, NMFCC = 20, lifterexp = 0.6):
+    import librosa
+    winSize = (S.shape[0]-1)*2
+    M = librosa.filters.mel(Fs, winSize, n_mels = NBands, fmax = fmax)
+    X = M.dot(np.abs(S))
+    X = librosa.core.logamplitude(X)
+    X = np.dot(librosa.filters.dct(NMFCC, X.shape[0]), X) #Make MFCC
+    #Do liftering
+    coeffs = np.arange(NMFCC)**lifterexp
+    coeffs[0] = 1
+    X = coeffs[:, None]*X
+    X = np.array(X, dtype = np.float32)
+    return X
 
 def warpSTFTMel(S, Fs, winSize):
     M = getMelFilterbank(Fs, winSize)

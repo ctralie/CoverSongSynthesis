@@ -9,6 +9,7 @@ from Synchronize import *
 from GeometricCoverSongs.CSMSSMTools import *
 from GeometricCoverSongs.pyMIRBasic.Chroma import *
 from GeometricCoverSongs.pyMIRBasic.MFCC import *
+from SpectrogramTools import *
 
 def getNormedFeatures(S, winSize, hopSize):
     """
@@ -40,20 +41,6 @@ def doSpectrogramAnalogiesSimple(SA, SAp, SB, Kappa):
         #Scale by power ratio
         SBp[:, k] = SAp[:, idx]*MagSB[k]/MagSA[idx]
     return SBp
-
-def getMFCCsFromSpec(S, Fs, NBands = 40, fmax = 8000, NMFCC = 20, lifterexp = 0.6):
-    winSize = (S.shape[0]-1)*2
-    M = librosa.filters.mel(Fs, winSize, n_mels = NBands, fmax = fmax)
-    X = M.dot(np.abs(S))
-    X = librosa.core.logamplitude(X)
-    X = np.dot(librosa.filters.dct(NMFCC, X.shape[0]), X) #Make MFCC
-    #Do liftering
-    coeffs = np.arange(NMFCC)**lifterexp
-    coeffs[0] = 1
-    X = coeffs[:, None]*X
-    X = np.array(X, dtype = np.float32)
-    return X
-
 
 def doSpectrogramAnalogies(SA, SAp, SB, T, Fs, useMFCCs = True):
     N = SA.shape[1]

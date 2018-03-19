@@ -119,7 +119,7 @@ def testNMF2DConvJointSynthetic():
         [res['W1'], res['W2'], res['H'], res['T'], res['F'], res['K']]
     A = multiplyConv2D(W1, H)
     Ap = multiplyConv2D(W2, H)
-    doNMF2DConvJoint(A, Ap, K, T, F, L, plotfn=plotNMF2DConvSpectraJoint)
+    doNMF2DConvJointGPU(A, Ap, K, T, F, L, doKL = True, plotfn=plotNMF2DConvSpectraJoint)
     #doNMF1DConv(V, K, T, L, plotfn=plotNMF1DConvSpectra)
 
 def testNMF2DConvJoint3WaySynthetic():
@@ -241,19 +241,33 @@ def testNMF1DMusic():
     foldername = "1DNMFResults"
     if not os.path.exists(foldername):
         os.mkdir(foldername)
-    K = 5
-    T = 16
     NIters = 80
     hopSize = 256
     winSize = 2048
-
     #Step 1: Do joint embedding on A and Ap
+    K = 10
+    T = 16
     Fs, X = sio.wavfile.read("music/SmoothCriminalAligned.wav")
     X1 = X[:, 0]/(2.0**15)
     X2 = X[:, 1]/(2.0**15)
     #Only take first 30 seconds for initial experiments
     X1 = X1[0:Fs*30]
     X2 = X2[0:Fs*30]
+    #Load in B
+    B, Fs = librosa.load("music/MJBad.mp3")
+    B = B[Fs*3:Fs*23]
+
+    """
+    K = 10
+    T = 16
+    Fs, X = sio.wavfile.read("music/Rednex/CottoneyeJoeSync.wav")
+    X1 = X[:, 0]/(2.0**15)
+    X2 = X[:, 1]/(2.0**15)
+    #Load in B
+    B, Fs = librosa.load("music/Rednex/WayIMateClip.wav")
+    B = B[Fs*3:Fs*23]    
+    """
+
     S1 = STFT(X1, winSize, hopSize)
     N = S1.shape[0]
     S2 = STFT(X2, winSize, hopSize)
@@ -296,65 +310,102 @@ def testNMF1DMusic():
     
     S1 = SOrig[0:N, :]
     S2 = SOrig[N::, :]
-    (SsA, RatiosA) = getComplexNMF1DTemplates(S1, W1, H, p = 2, audioParams = {'winSize':winSize, \
+    (AllSsA, RatiosA) = getComplexNMF1DTemplates(S1, W1, H, p = 2, audioParams = {'winSize':winSize, \
         'hopSize':hopSize, 'Fs':Fs, 'fileprefix':"%s/TrackA"%foldername})
-    (SsAp, RatiosAp) = getComplexNMF1DTemplates(S2, W2, H, p = 2, audioParams = {'winSize':winSize, \
+    (AllSsAp, RatiosAp) = getComplexNMF1DTemplates(S2, W2, H, p = 2, audioParams = {'winSize':winSize, \
         'hopSize':hopSize, 'Fs':Fs, 'fileprefix':"%s/TrackAp"%foldername})
     
 
-    #Step 2: Decompose B into components
-    B, Fs = librosa.load("music/MJBad.mp3")
-    B = B[Fs*3:Fs*23]
+    #Step 1a: Combine templates manually
+    clusters = [[3], [5], [0, 1, 2, 4, 6, 7, 8, 9]]
+    SsA = []
+    SsAp = []
+    for i, cluster in enumerate(clusters):
+        SAi = np.zeros(S1.shape, dtype = np.complex)
+        SApi = np.zeros(S2.shape, dtype = np.complex)
+        for idx in cluster:
+            SAi += AllSsA[idx]
+            SApi += AllSsAp[idx]
+        SsA.append(SAi)
+        SsAp.append(SApi)
+        y_hat = griffinLimInverse(SAi, winSize, hopSize)
+        y_hat = y_hat/np.max(np.abs(y_hat))
+        wavfile.write("%s/TrackAManual%i.wav"%(foldername, i), Fs, y_hat)
+        y_hat = griffinLimInverse(SApi, winSize, hopSize)
+        y_hat = y_hat/np.max(np.abs(y_hat))
+        wavfile.write("%s/TrackApManual%i.wav"%(foldername, i), Fs, y_hat)
+    
+    #Step 2: Create a W matrix which is grouped by cluster and which has pitch shifted
+    #versions of each template
+    WB = np.array([])
+    clusteridxs = [0]
+    for i, cluster in enumerate(clusters):
+        for idx in cluster:
+            thisW = W1[:, :, idx].T
+            for shift in range(-6, 7):
+                thisWShift = pitchShiftSTFT(thisW, Fs, shift).T[:, :, None]
+                if WB.size == 0:
+                    WB = thisWShift
+                else:
+                    WB = np.concatenate((WB, thisWShift), 2)
+        clusteridxs.append(WB.shape[2])
+    print("WB.shape = ", WB.shape)
+    print("clusteridxs = ", clusteridxs)
+    sio.savemat("%s/WB.mat"%foldername, {"WB":WB})
+
+    #Step 3: Filter B by the new W matrix
     SBOrig = STFT(B, winSize, hopSize)
     plotfn = lambda V, W, H, iter, errs: \
         plotNMF1DConvSpectra(V, W, H, iter, errs, hopLength = hopSize)
     filename = "%s/NMFB.mat"%foldername
     if not os.path.exists(filename):
-        (WB, HB) = doNMF1DConv(np.abs(SBOrig), K, T, NIters)
-        sio.savemat(filename, {"WB":WB, "HB":HB})
+        (WB, HB) = doNMF1DConv(np.abs(SBOrig), WB.shape[2], T, NIters, W = WB)
+        sio.savemat(filename, {"HB":HB, "WB":WB})
     else:
-        res = sio.loadmat(filename)
-        [WB, HB] = [res['WB'], res['HB']]
-    (SsB, RatiosB) = getComplexNMF1DTemplates(SBOrig, WB, HB, p = 2, audioParams = {'winSize':winSize, \
-        'hopSize':hopSize, 'Fs':Fs, 'fileprefix':"%s/TrackB"%foldername})
-    
-
-    #Step 3: Pitch shift each spectral template to create dictionary
-    SADict = np.array([])
-    SApDict = np.array([])
-    Gap = np.zeros((N, 20), dtype=np.complex)
-    for i, (SA, SAp, Ratios) in enumerate(zip(SsA, SsAp, RatiosA)):
-        print("Making %ith component of dictionary"%(i+1))
+        HB = sio.loadmat(filename)["HB"]
+    #Separate out B tracks
+    As = []
+    AsSum = np.zeros(SBOrig.shape)
+    p = 2
+    for i in range(len(clusters)):
+        thisH = np.array(HB)
+        thisH[0:clusteridxs[i], :] = 0
+        thisH[clusteridxs[i+1]::, :] = 0
+        As.append(multiplyConv1D(WB, thisH)**p)
+        AsSum += As[-1]
+    SsB = []
+    for i in range(len(clusters)):
+        SBi = SBOrig*As[i]/AsSum
+        SsB.append(SBi)
+        y_hat = griffinLimInverse(SBi, winSize, hopSize)
+        y_hat = y_hat/np.max(np.abs(y_hat))
+        wavfile.write("%s/TrackBManual%i.wav"%(foldername, i), Fs, y_hat)
         plt.clf()
-        (SA, SAp) = ThresholdSpecs(SA, SAp, Ratios, 0.05, gap = 10, debugPlot = True)
-        plt.savefig("%s/TrackA_%iPower.svg"%(foldername, i), bbox_inches = 'tight')
-        DictAi = getPitchShiftedSpecsFromSpec(SA, Fs, winSize, hopSize, shiftrange = 3)
-        DictApi = getPitchShiftedSpecsFromSpec(SAp, Fs, winSize, hopSize, shiftrange = 3)
-        if SADict.size == 0:
-            SADict = DictAi
-            SApDict = DictApi
-        else:
-            SADict = np.concatenate((SADict, DictAi, Gap), 1)
-            SApDict = np.concatenate((SApDict, DictApi, Gap), 1)
-        print("SADict.shape = ", SADict.shape)
+        plt.plot(np.sum(As[i]**2, 0)/np.sum(AsSum**2, 0))
+        plt.savefig("%s/TrackBManual%s.svg"%(foldername, i))
 
     #Step 4: Do NMF Dreidger on one track of B at a time
+    NIters = 100
+    shiftrange = 6
+    for i in range(len(SsA)):
+        SsA[i] = getPitchShiftedSpecsFromSpec(SsA[i], Fs, winSize, hopSize, shiftrange=shiftrange)
+        SsAp[i] = getPitchShiftedSpecsFromSpec(SsAp[i], Fs, winSize, hopSize, shiftrange=shiftrange)
     fn = lambda V, W, H, iter, errs: plotNMFSpectra(V, W, H, iter, errs, hopSize)
     XFinal = np.array([])
-    for i, SB in enumerate(SsB):
+    for i in range(len(SsA)):
         print("Doing track %i..."%i)
         HFilename = "%s/H%i.mat"%(foldername, i)
         if not os.path.exists(HFilename):
-            H = doNMFDreidger(np.abs(SB), np.abs(SADict), NIters, \
-            r = 7, p = 3, c = 3, plotfn = fn)
-            sio.savemat("%s/H%i.mat"%(foldername, i), {"H":H})
+            H = doNMFDreidger(np.abs(SsB[i]), np.abs(SsA[i]), NIters, \
+            r = 7, p = 10, c = 3, plotfn = fn)
+            sio.savemat(HFilename, {"H":H})
         else:
             H = sio.loadmat(HFilename)["H"]
         H = np.array(H, dtype=np.complex)
-        S = SADict.dot(H)
+        S = SsA[i].dot(H)
         X = griffinLimInverse(S, winSize, hopSize)
         wavfile.write("%s/B%i_Dreidger.wav"%(foldername, i), Fs, X)
-        S = SApDict.dot(H)
+        S = SsAp[i].dot(H)
         X = griffinLimInverse(S, winSize, hopSize)
         Y = X/np.max(np.abs(X))
         wavfile.write("%s/Bp%i.wav"%(foldername, i), Fs, Y)
@@ -362,12 +413,11 @@ def testNMF1DMusic():
             XFinal = X
         else:
             XFinal += X
-        Y = XFinal/np.max(np.abs(XFinal))
-        wavfile.write("%s/BpFinal.wav"%foldername, Fs, Y)
+    Y = XFinal/np.max(np.abs(XFinal))
+    wavfile.write("%s/BpFinal.wav"%foldername, Fs, Y)
     
 
-
-def testNMF2DMusic(Joint3Way = False):
+def testNMF2DMusic(Joint3Way = False, doKL = False):
     """
     :param Joint3Way: If true, do a joint embedding with A, Ap, and B\
         If false, then do a joint embedding with (A, Ap) and represent\
@@ -385,8 +435,8 @@ def testNMF2DMusic(Joint3Way = False):
     A = X[:, 0]/(2.0**15)
     Ap = X[:, 1]/(2.0**15)
     #Only take 15 seconds for initial experiments
-    A = A[5*Fs:Fs*25]
-    Ap = Ap[5*Fs:Fs*25]
+    A = A[0:Fs*20]
+    Ap = Ap[0:Fs*20]
 
     B, Fs = librosa.load("music/MJBad.mp3")
     B = B[Fs*3:Fs*23]
@@ -396,7 +446,7 @@ def testNMF2DMusic(Joint3Way = False):
     bins_per_octave = 24
     hopSize = int(np.round(Fs/100.0)) #For librosa display to know approximate timescale
     ZoomFac = 8 #Scaling factor so that each window is approximately 10ms
-    K = 2
+    K = 3
     T = 24
     F = 36
     NIters = 440
@@ -438,22 +488,16 @@ def testNMF2DMusic(Joint3Way = False):
         #Output filtered sounds
         foldername = "AllJoint2DNMFFiltered"
     else:
-        #Do 2DNMF on a joint embedding of A and Ap
-        N = CA.shape[0]
-        C = np.zeros((N*2, CA.shape[1]))
-        C[0:N, :] = CA
-        C[N::, :] = CAp
-        plotfn = lambda V, W, H, iter, errs: \
-            plotNMF2DConvSpectraJoint(V, W, H, iter, errs, \
+        #Do 2DNMF jointly on A and Ap
+        plotfn = lambda A, Ap, W1, W2, H, iter, errs: \
+            plotNMF2DConvSpectraJoint(A, Ap, W1, W2, H, iter, errs, \
             hopLength = hopSize, audioParams = audioParams)
-        (W, H1) = doNMF2DConvGPU(C, K, T, F, L=NIters, plotfn = plotfn, \
-                                joint = True, plotInterval=NIters*2)
+        (W1, W2, H1) = doNMF2DConvJointGPU(CA, CAp, K, T, F, L=NIters, doKL = doKL, plotfn = plotfn, \
+                                plotInterval=NIters*2)
         #Represent B in the dictionary of A
-        W1 = W[:, 0:N, :]
-        W2 = W[:, 0:N, :]
         plotfn = lambda V, W, H, iter, errs: \
             plotNMF2DConvSpectra(V, W, H, iter, errs, hopLength = hopSize)
-        (W, H2) = doNMF2DConvGPU(CB, K, T, F, W=W1, L=NIters, \
+        (W, H2) = doNMF2DConvGPU(CB, K, T, F, W=W1, L=NIters, doKL = doKL, \
                                 plotfn=plotfn, plotInterval=NIters*2)
         sio.savemat("SmoothCriminalNMF2DJoint.mat", {"W1":W1, "W2":W2, "H1":H1, "H2":H2})
         #res = sio.loadmat("SmoothCriminalNMF2DJoint.mat")
@@ -479,12 +523,13 @@ def testDreidgerTranslate():
     winSize = 2048
     NIters = 100
     shiftrange = 6
+    K = 3
 
     #Step 1: Load in A, Ap, and B
     SsA = []
     SsB = []
     SsAp = []
-    for i in range(2):
+    for i in range(K):
         print("Loading i = %i"%i)
         Fs, A = sio.wavfile.read("Example/A_%i.wav"%i)
         SsA.append(getPitchShiftedSpecs(A, Fs, winSize, hopSize, shiftrange=shiftrange))
@@ -496,12 +541,12 @@ def testDreidgerTranslate():
     #Step 2: Do NMF Dreidger on one track at a time
     fn = lambda V, W, H, iter, errs: plotNMFSpectra(V, W, H, iter, errs, hopSize)
     XFinal = np.array([])
-    for i in range(2):
+    for i in range(K):
         print("Doing track %i..."%i)
         HFilename = "Example/H%i.mat"%i
         if not os.path.exists(HFilename):
             H = doNMFDreidger(np.abs(SsB[i]), np.abs(SsA[i]), NIters, \
-            r = 7, p = 10, c = 0, plotfn = fn)
+            r = 7, p = 10, c = 3, plotfn = fn)
             sio.savemat("Example/H%i.mat"%i, {"H":H})
         else:
             H = sio.loadmat(HFilename)["H"]
@@ -511,12 +556,14 @@ def testDreidgerTranslate():
         wavfile.write("Example/B%i_Dreidger.wav"%i, Fs, X)
         S = SsAp[i].dot(H)
         X = griffinLimInverse(S, winSize, hopSize)
-        wavfile.write("Example/Bp%i.wav"%i, Fs, X)
+        Y = X/np.max(np.abs(X))
+        wavfile.write("Example/Bp%i.wav"%i, Fs, Y)
         if XFinal.size == 0:
             XFinal = X
         else:
             XFinal += X
-    wavfile.write("Example/BpFinal.wav", Fs, XFinal)
+    Y = XFinal/np.max(np.abs(XFinal))
+    wavfile.write("Example/BpFinal.wav", Fs, Y)
     
 
     
@@ -528,8 +575,8 @@ if __name__ == '__main__':
     #testNMFJointSmoothCriminal()
     #testNMF1DConvSynthetic()
     #testNMF2DConvSynthetic()
-    testNMF2DConvJointSynthetic()
+    #testNMF2DConvJointSynthetic()
     #testNMF2DConvJoint3WaySynthetic()
     #testNMF1DMusic()
-    #testNMF2DMusic(Joint3Way = False)
+    testNMF2DMusic(Joint3Way = False, doKL = True)
     #testDreidgerTranslate()
