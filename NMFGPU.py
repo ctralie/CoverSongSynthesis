@@ -489,8 +489,8 @@ def doNMF2DConvJointGPU(A, Ap, K, T, F, L, W = np.array([]), doKL = False, plotf
 
 
 
-def doNMF2DConvJoint3WayGPU(A, Ap, B, K, T, F, L, plotfn = None, prefix = "", \
-        plotInterval = 60, plotFirst = False):
+def doNMF2DConvJoint3WayGPU(A, Ap, B, K, T, F, L, doKL = False, plotfn = None, \
+         prefix = "", plotInterval = 60, plotFirst = False):
     """
     A version of 2DNMF that jointly solves for W1, H1, W2, and H2 that
     satisfy W1*H1 ~= A, W2*H1 ~= Ap, and W2*H1 ~= B
@@ -501,6 +501,7 @@ def doNMF2DConvJoint3WayGPU(A, Ap, B, K, T, F, L, plotfn = None, prefix = "", \
     :param T: Time extent of W matrices
     :param F: Frequency extent of H matrices
     :param L: Number of iterations
+    :param doKL: Whether to do Kullback-Leibler divergence.  If false, do Euclidean
     :param plotfn: A function used to plot each iteration, which should\
         take the arguments (V, W, H, iter)
     :returns (W1, W2, H1, H2): \
@@ -524,7 +525,15 @@ def doNMF2DConvJoint3WayGPU(A, Ap, B, K, T, F, L, plotfn = None, prefix = "", \
     Ap = gpuarray.to_gpu(np.array(Ap, dtype=np.float32))
     B = gpuarray.to_gpu(np.array(B, dtype=np.float32))
 
-    errs = [getJoint3WayError(A, Ap, B, W1, W2, H1, H2, getEuclideanErrorGPU, multiplyConv2DGPU)]
+    errfn = getEuclideanErrorGPU
+    WGradfn = multiplyConv2DWGradGPU
+    HGradfn = multiplyConv2DHGradGPU
+    if doKL:
+        errfn = getKLErrorGPU
+        WGradfn = multiplyConv2DWGradKLGPU
+        HGradfn = multiplyConv2DHGradKLGPU
+
+    errs = [getJoint3WayError(A, Ap, B, W1, W2, H1, H2, errfn, multiplyConv2DGPU)]
     if plotfn:
         res=4
         plt.figure(figsize=((8+2*K)*res*1.2, 2*res))
@@ -536,19 +545,19 @@ def doNMF2DConvJoint3WayGPU(A, Ap, B, K, T, F, L, plotfn = None, prefix = "", \
         print("Joint 2DNMF iteration %i of %i"%(l+1, L))
         tic = time.time()
         #Step 1: Update Ws
-        Lam11 = multiplyConv2DGPU(W1, H1, Verbose = True)
-        Lam12 = multiplyConv2DGPU(W1, H2, Verbose = True)
-        Lam21 = multiplyConv2DGPU(W2, H1, Verbose = True)
+        Lam11 = multiplyConv2DGPU(W1, H1)
+        Lam12 = multiplyConv2DGPU(W1, H2)
+        Lam21 = multiplyConv2DGPU(W2, H1)
 
         #Update W1
-        (N11, D11) = multiplyConv2DWGradGPU(W1, H1, A, Lam11, doDivision = False)
-        (N12, D12) = multiplyConv2DWGradGPU(W1, H2, B, Lam12, doDivision = False)
+        (N11, D11) = WGradfn(W1, H1, A, Lam11, doDivision = False)
+        (N12, D12) = WGradfn(W1, H2, B, Lam12, doDivision = False)
         Num = skcuda.misc.add(N11, N12)
         Denom = skcuda.misc.add(D11, D12)
         Fac = skcuda.misc.divide(Num, Denom)
         W1 = skcuda.misc.multiply(W1, Fac)
         #Update W2
-        Fac = multiplyConv2DWGradGPU(W2, H1, Ap, Lam21, doDivision = True)
+        Fac = WGradfn(W2, H1, Ap, Lam21, doDivision = True)
         W2 = skcuda.misc.multiply(W2, Fac)
 
         #Step 2: Update Hs
@@ -556,17 +565,17 @@ def doNMF2DConvJoint3WayGPU(A, Ap, B, K, T, F, L, plotfn = None, prefix = "", \
         Lam11 = multiplyConv2DGPU(W1, H1)
         Lam12 = multiplyConv2DGPU(W1, H2)
         Lam21 = multiplyConv2DGPU(W2, H1)
-        (N11, D11) = multiplyConv2DHGradGPU(W1, H1, A, Lam11, doDivision = False)
-        (N12, D12) = multiplyConv2DHGradGPU(W2, H1, Ap, Lam21, doDivision = False)
+        (N11, D11) = HGradfn(W1, H1, A, Lam11, doDivision = False)
+        (N12, D12) = HGradfn(W2, H1, Ap, Lam21, doDivision = False)
         Num = skcuda.misc.add(N11, N12)
         Denom = skcuda.misc.add(D11, D12)
         Fac = skcuda.misc.divide(Num, Denom)
         H1 = skcuda.misc.multiply(H1, Fac)
         #Update H2
-        Fac = multiplyConv2DHGradGPU(W1, H2, B, Lam12, doDivision = True)
+        Fac = HGradfn(W1, H2, B, Lam12, doDivision = True)
         H2 = skcuda.misc.multiply(H2, Fac)
 
-        errs.append(getJoint3WayError(A, Ap, B, W1, W2, H1, H2, getEuclideanErrorGPU, multiplyConv2DGPU))
+        errs.append(getJoint3WayError(A, Ap, B, W1, W2, H1, H2, errfn, multiplyConv2DGPU))
         print("Elapsed Time: %.3g"%(time.time()-tic))
         if plotfn and ((l+1) == L or (l+1)%plotInterval == 0):
             plt.clf()

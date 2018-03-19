@@ -417,7 +417,7 @@ def testNMF1DMusic():
     wavfile.write("%s/BpFinal.wav"%foldername, Fs, Y)
     
 
-def testNMF2DMusic(Joint3Way = False, doKL = False):
+def testNMF2DMusic(K, T, F, NIters = 440, Joint3Way = False, doKL = False):
     """
     :param Joint3Way: If true, do a joint embedding with A, Ap, and B\
         If false, then do a joint embedding with (A, Ap) and represent\
@@ -446,9 +446,6 @@ def testNMF2DMusic(Joint3Way = False, doKL = False):
     bins_per_octave = 24
     hopSize = int(np.round(Fs/100.0)) #For librosa display to know approximate timescale
     ZoomFac = 8 #Scaling factor so that each window is approximately 10ms
-    K = 3
-    T = 24
-    F = 36
     NIters = 440
 
     resOrig = {}
@@ -480,7 +477,7 @@ def testNMF2DMusic(Joint3Way = False, doKL = False):
             plotNMF2DConvSpectraJoint3Way(A, Ap, B, W1, W2, H1, H2, iter, errs,\
             hopLength = hopSize, audioParams=audioParams, useGPU = True)
         (W1, W2, H1, H2) = doNMF2DConvJoint3WayGPU(CA, CAp, CB, K, T, F, L=NIters, \
-            plotfn=plotfn, plotInterval = NIters*2)
+            doKL = doKL, plotfn=plotfn, plotInterval = NIters*2)
         sio.savemat("SmoothCriminalAllNMF2DJoint.mat", {"W1":W1, "W2":W2, "H1":H1, "H2":H2})
         #res = sio.loadmat("SmoothCriminalAllNMF2DJoint.mat")
         #[W1, W2, H1, H2] = [res['W1'], res['W2'], res['H1'], res['H2']]
@@ -523,7 +520,7 @@ def testDreidgerTranslate():
     winSize = 2048
     NIters = 100
     shiftrange = 6
-    K = 3
+    K = 4
 
     #Step 1: Load in A, Ap, and B
     SsA = []
@@ -578,5 +575,5 @@ if __name__ == '__main__':
     #testNMF2DConvJointSynthetic()
     #testNMF2DConvJoint3WaySynthetic()
     #testNMF1DMusic()
-    testNMF2DMusic(Joint3Way = False, doKL = True)
+    testNMF2DMusic(K = 2, T = 24, F = 14, Joint3Way = True, doKL = True)
     #testDreidgerTranslate()

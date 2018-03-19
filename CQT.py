@@ -95,6 +95,23 @@ def getiCQTGriffinLimNakamuraMatlab(eng, C, T, fs, resol, NIters = 20, \
         res = sio.loadmat("CQTTemp.mat")
         return (res["rec_sig"], res["rec_spec"])
 
+def getTemplateNakamura(eng, W, CSize, ZoomFac, bins_per_octave, XSize, Fs, NIters = 100):
+    """
+    Invert a small snippet from Nakamura
+    """
+    import scipy.ndimage
+    #Zeropad to avoid a headache figuring out the proper lengths in Nakamura's code
+    C = np.zeros(CSize)
+    T = W.shape[1]
+    for r in range(2):
+        C[:, T*r:T*(r+1)] = W
+    CZoom = scipy.ndimage.interpolation.zoom(C, (1, ZoomFac))
+    CZoom = np.array(CZoom, np.complex)
+    (y_hat, spec) = getiCQTGriffinLimNakamuraMatlab(eng, CZoom, XSize, Fs, \
+        bins_per_octave, NIters=NIters, randPhase = True)
+    y_hat = y_hat[0:int(np.ceil(XSize*float(T)/C.shape[1]))]
+    return y_hat
+
 def getNSGT(X, Fs, resol=24):
     """
     Perform a Nonstationary Gabor Transform implementation of CQT
