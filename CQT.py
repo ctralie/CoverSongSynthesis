@@ -112,6 +112,24 @@ def getTemplateNakamura(eng, W, CSize, ZoomFac, bins_per_octave, XSize, Fs, NIte
     y_hat = y_hat[0:int(np.ceil(XSize*float(T)/C.shape[1]))]
     return y_hat
 
+def getTemplateNSGT(W, CSize, ZoomFac, bins_per_octave, XSize, Fs, NIters = 100):
+    """
+    Invert a small snippet from NSGT
+    """
+    import scipy.ndimage
+    #Zeropad to avoid a headache figuring out the proper lengths in Nakamura's code
+    C = np.zeros(CSize)
+    T = W.shape[1]
+    for r in range(20):
+        C[:, T*r:T*(r+1)] = W
+    CZoom = scipy.ndimage.interpolation.zoom(C, (1, ZoomFac))
+    CZoom = np.array(CZoom, np.complex)
+    y_hat = getiNSGTGriffinLim(CZoom, XSize, Fs, bins_per_octave)
+    i1 = int(np.round(10*XSize*float(T)/C.shape[1]))
+    i2 = int(np.round(11*XSize*float(T)/C.shape[1]))
+    y_hat = y_hat[i1:i2]
+    return y_hat
+
 def getNSGT(X, Fs, resol=24):
     """
     Perform a Nonstationary Gabor Transform implementation of CQT
@@ -148,7 +166,9 @@ def getiNSGTGriffinLim(C, L, Fs, resol=24, randPhase = False, NIters = 20):
     A = np.array(C, dtype = np.complex)
     for i in range(NIters):
         print("iNSGT Griffin Lim Iteration %i of %i"%(i+1, NIters))
-        A = nsgt.forward(nsgt.backward(C))
+        Ai = np.array(nsgt.forward(nsgt.backward(C)))
+        A = np.zeros_like(C)
+        A[:, 0:Ai.shape[1]] = Ai
         Norm = np.sqrt(A*np.conj(A))
         Norm[Norm < eps] = 1
         A = np.abs(C)*(A/Norm)

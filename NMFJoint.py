@@ -598,10 +598,9 @@ def plotNMF2DConvSpectraJoint(A, Ap, W1, W2, H, iter, errs, foldername, \
     W2H = multiplyConv2D(W2, H)
 
     if audioParams:
-        from CQT import getiCQTGriffinLimNakamuraMatlab, getTemplateNakamura
-        from scipy.io import wavfile
+        from CQT import getiNSGTGriffinLim, getTemplateNSGT
         
-        [Fs, eng, XSizes] = [audioParams['Fs'], audioParams['eng'], audioParams['XSizes']]
+        [Fs, XSizes] = [audioParams['Fs'], audioParams['XSizes']]
         ZoomFac = audioParams['ZoomFac']
         bins_per_octave = audioParams['bins_per_octave']
         #Invert the audio
@@ -610,15 +609,15 @@ def plotNMF2DConvSpectraJoint(A, Ap, W1, W2, H, iter, errs, foldername, \
             for (s1, Lam) in zip(["A", "Ap"], [W1H, W2H]):
                 print("%s.size = %i"%(s1, XSizes[s1]))
                 LamZoom = scipy.ndimage.interpolation.zoom(Lam, (1, ZoomFac))
-                (y_hat, spec) = getiCQTGriffinLimNakamuraMatlab(eng, LamZoom, XSizes[s1], Fs, \
-                    bins_per_octave, NIters=100, randPhase = True)
+                y_hat = getiNSGTGriffinLim(LamZoom, XSizes[s1], Fs, \
+                                            bins_per_octave, randPhase = True)
                 y_hat = y_hat/np.max(np.abs(y_hat))
                 sio.wavfile.write("%s/%s.wav"%(foldername, s1), Fs, y_hat)
             #Step 2: Invert the templates
             for (s1, thisW) in zip(["A", "Ap"], (W1, W2)):
                 for k in range(K):
-                    y_hat = getTemplateNakamura(eng, thisW[:, :, k].T, A.shape, \
-                                        ZoomFac, bins_per_octave, XSizes[s1], Fs)
+                    y_hat = getTemplateNSGT(thisW[:, :, k].T, A.shape, ZoomFac, \
+                                        bins_per_octave, XSizes[s1], Fs)
                     y_hat = y_hat/np.max(np.abs(y_hat))
                     sio.wavfile.write("%s/%s_W%i.wav"%(foldername, s1, k), Fs, y_hat)
 
@@ -719,11 +718,10 @@ def plotNMF2DConvSpectraJoint3Way(A, Ap, B, W1, W2, H1, H2, iter, errs, folderna
         K = 0
 
     if audioParams:
-        from CQT import getCQTNakamuraMatlab, getiCQTGriffinLimNakamuraMatlab
-        from CQT import getTemplateNakamura
+        from CQT import getiNSGTGriffinLim, getTemplateNSGT
         from scipy.io import wavfile
         Fs = audioParams['Fs']
-        [eng, XSizes] = [audioParams['eng'], audioParams['XSizes']]
+        XSizes = audioParams['XSizes']
         ZoomFac = audioParams['ZoomFac']
         bins_per_octave = -1
         winSize = -1
@@ -734,8 +732,8 @@ def plotNMF2DConvSpectraJoint3Way(A, Ap, B, W1, W2, H1, H2, iter, errs, folderna
         #Invert each Wt
         for (s1, thisW) in zip(["A", "Ap"], (W1, W2)):
             for k in range(K):
-                y_hat = getTemplateNakamura(eng, thisW[:, :, k].T, A.shape, \
-                                    ZoomFac, bins_per_octave, XSizes[s1], Fs)
+                y_hat = getTemplateNSGT(thisW[:, :, k].T, A.shape, ZoomFac, \
+                                        bins_per_octave, XSizes[s1], Fs)
                 y_hat = y_hat/np.max(np.abs(y_hat))
                 sio.wavfile.write("%s/%s_W%i.wav"%(foldername, s1, k), Fs, y_hat)
     from NMFGPU import multiplyConv2DGPU
@@ -782,8 +780,8 @@ def plotNMF2DConvSpectraJoint3Way(A, Ap, B, W1, W2, H1, H2, iter, errs, folderna
             if bins_per_octave > -1:
                 print("%s.size = %i"%(s1, XSizes[s1]))
                 LamZoom = scipy.ndimage.interpolation.zoom(Lam, (1, ZoomFac))
-                (y_hat, spec) = getiCQTGriffinLimNakamuraMatlab(eng, LamZoom, XSizes[s1], Fs, \
-                    bins_per_octave, NIters=100, randPhase = True)
+                y_hat = getiNSGTGriffinLim(LamZoom, XSizes[s1], Fs, \
+                                            bins_per_octave, randPhase = True)
                 y_hat = y_hat/np.max(np.abs(y_hat))
                 sio.wavfile.write("%s/%s.wav"%(foldername, s1), Fs, y_hat)
     plt.subplot(2, 8+2*K, 4)

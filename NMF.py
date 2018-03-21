@@ -532,6 +532,9 @@ def getComplexNMF2DTemplates(C, W, H, ZoomFac, p = 2):
     K = W.shape[2]
     #Step 1: Compute the masked matrices raised to the power p
     AsSum = np.zeros(C.shape)
+    print("W.shape = ", W.shape)
+    print("C.shape = ", C.shape)
+    print("H.shape = ", H.shape)
     As = []
     for k in range(K):
         Hk = np.array(H)

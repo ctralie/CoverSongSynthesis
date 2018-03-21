@@ -235,6 +235,77 @@ def testNMFMusaicingSimple():
     Y = Y/np.max(np.abs(Y))
     wavfile.write("letitbee.wav", Fs, Y)
 
+
+def testHarmPercMusic():
+    import librosa
+    from scipy.io import wavfile
+    import scipy.ndimage
+    foldername = "HarmPerc"
+    K = 2
+    #STFT Params
+    winSize = 2048
+    hopSize = 256
+
+    if not os.path.exists(foldername):
+        os.mkdir(foldername)
+
+    Fs, X = wavfile.read("music/SmoothCriminalAligned.wav")
+    X = np.array(X, dtype=np.float32)
+    A = X[:, 0]/(2.0**15)
+    Ap = X[:, 1]/(2.0**15)
+    #Take 20 seconds clips from each
+    A = A[0:Fs*20]
+    Ap = Ap[0:Fs*20]
+    B, Fs = librosa.load("music/MJBad.mp3")
+    B = B[Fs*3:Fs*23]
+    #B, Fs = librosa.load("music/MJSpeedDemonClip.wav")
+
+    SsA = []
+    SsAp = []
+    SsB = []
+    for (V, Ss, s) in zip([A, Ap, B], [SsA, SsAp, SsB], ["A", "Ap", "B"]):
+        S = STFT(V, winSize, hopSize)
+        Harm, Perc = librosa.decompose.hpss(S)
+        X1 = iSTFT(Harm, winSize, hopSize)
+        X2 = iSTFT(Perc, winSize, hopSize)
+        wavfile.write("%s/%s_0.wav"%(foldername, s), Fs, X1)
+        wavfile.write("%s/%s_1.wav"%(foldername, s), Fs, X2)
+        if s == "B":
+            Ss.append(Harm)
+            Ss.append(Perc)
+        else:
+            for Xk in [X1, X2]:
+                Ss.append(getPitchShiftedSpecs(Xk, Fs, winSize, hopSize))          
+        
+
+    ##Do NMF Driedger on one track at a time
+    fn = lambda V, W, H, iter, errs: plotNMFSpectra(V, W, H, iter, errs, hopSize)
+    SFinal = np.zeros(SsB[0].shape, dtype = np.complex)
+    print("SFinal.shape = ", SFinal.shape)
+    for k in range(K):
+        print("Doing Driedger on track %i..."%k)
+        HFilename = "%s/DriedgerH%i.mat"%(foldername, k)
+        if not os.path.exists(HFilename):
+            H = doNMFDriedger(np.abs(SsB[k]), np.abs(SsA[k]), 100, \
+            r = 7, p = 10, c = 3, plotfn = fn)
+            sio.savemat(HFilename, {"H":H})
+        else:
+            H = sio.loadmat(HFilename)["H"]
+        H = np.array(H, dtype=np.complex)
+        S = SsA[k].dot(H)
+        X = griffinLimInverse(S, winSize, hopSize)
+        wavfile.write("%s/B%i_Driedger.wav"%(foldername, k), Fs, X)
+        S = SsAp[k].dot(H)
+        X = griffinLimInverse(S, winSize, hopSize)
+        wavfile.write("%s/Bp%i.wav"%(foldername, k), Fs, X)
+        SFinal += S
+
+    ##Do Griffin Lim phase correction on the final mixed STFT
+    X = griffinLimInverse(SFinal, winSize, hopSize)
+    Y = X/np.max(np.abs(X))
+    wavfile.write("%s/BpFinal.wav"%foldername, Fs, Y)
+
+
 def testNMF1DMusic():
     import librosa
     from scipy.io import wavfile
@@ -427,12 +498,10 @@ def testNMF2DMusic(K, T, F, NIters = 440, shiftrange = 6, ZoomFac = 8, \
     import librosa
     from scipy.io import wavfile
     import scipy.ndimage
-    import subprocess
     initParallelAlgorithms()
-    eng = initMatlabEngine()
     doInitialInversions = False
 
-    Fs, X = sio.wavfile.read("music/SmoothCriminalAligned.wav")
+    Fs, X = wavfile.read("music/SmoothCriminalAligned.wav")
     X = np.array(X, dtype=np.float32)
     A = X[:, 0]/(2.0**15)
     Ap = X[:, 1]/(2.0**15)
@@ -441,12 +510,13 @@ def testNMF2DMusic(K, T, F, NIters = 440, shiftrange = 6, ZoomFac = 8, \
     Ap = Ap[0:Fs*20]
     B, Fs = librosa.load("music/MJBad.mp3")
     B = B[Fs*3:Fs*23]
+    #B, Fs = librosa.load("music/MJSpeedDemonClip.wav")
 
     ## Step 1: Compute CQTs
     XSizes = {}
     bins_per_octave = 24
     hopSize = int(np.round(Fs/100.0)) #For librosa display to know approximate timescale
-    NIters = 440
+    NIters = 300
 
     #STFT Params
     winSize = 2048
@@ -456,7 +526,11 @@ def testNMF2DMusic(K, T, F, NIters = 440, shiftrange = 6, ZoomFac = 8, \
     res = {}
     for (V, s) in zip([A, Ap, B], ["A", "Ap", "B"]):
         print("Doing CQT of %s..."%s)
-        C = getCQTNakamuraMatlab(eng, V, Fs, bins_per_octave)
+        C0 = getNSGT(V, Fs, bins_per_octave)
+        #Zeropad to nearest even factor of the zoom factor
+        NRound = ZoomFac*int(np.ceil(C0.shape[1]/float(ZoomFac)))
+        C = np.zeros((C0.shape[0], NRound), dtype = np.complex)
+        C[:, 0:C0.shape[1]] = C0
         resOrig[s] = C
         C = np.abs(C)
         C = scipy.ndimage.interpolation.zoom(C, (1, 1.0/ZoomFac))
@@ -464,22 +538,25 @@ def testNMF2DMusic(K, T, F, NIters = 440, shiftrange = 6, ZoomFac = 8, \
         res[s] = C
         if doInitialInversions:
             CZoom = scipy.ndimage.interpolation.zoom(C, (1, ZoomFac))
-            (y_hat, spec) = getiCQTGriffinLimNakamuraMatlab(eng, CZoom, V.size, Fs, bins_per_octave, \
-                NIters=100, randPhase = True)
+            y_hat = getiNSGTGriffinLim(CZoom, V.size, Fs, bins_per_octave, \
+                                                NIters = 100, randPhase = True)
             sio.wavfile.write("%sGTInverted.wav"%s, Fs, y_hat)
     XSizes["Bp"] = XSizes["B"]
     print(XSizes)
+
     [CAOrig, CApOrig, CBOrig] = [resOrig['A'], resOrig['Ap'], resOrig['B']]
     [CA, CAp, CB] = [res['A'], res['Ap'], res['B']]
+    #Compute length of convolutional window in milliseconds
+    t = 1000.0*(XSizes['A']/float(Fs))*float(T)/CA.shape[1]
+    print("Convolutional window size: %.3g milliseconds"%t)
 
     audioParams={'Fs':Fs, 'bins_per_octave':bins_per_octave, \
-                'prefix':'', 'eng':eng, 'XSizes':XSizes, "ZoomFac":ZoomFac}
+                'prefix':'', 'XSizes':XSizes, "ZoomFac":ZoomFac}
 
     ## Step 2: Compute joint NMF
     if Joint3Way:
         #Do Joint 3 Way 2DNMF
         foldername = "Joint2DNMFFiltered3Way_K%i_Z%i_T%i_F%i_Trial%i"%(K, ZoomFac, T, F, Trial)
-        audioParams['foldername'] = foldername
         filename = "%s/NMF2DJoint.mat"%foldername
         if not os.path.exists(foldername):
             os.mkdir(foldername)
@@ -493,11 +570,9 @@ def testNMF2DMusic(K, T, F, NIters = 440, shiftrange = 6, ZoomFac = 8, \
         else:
             res = sio.loadmat(filename)
             [W1, W2, H1, H2] = [res['W1'], res['W2'], res['H1'], res['H2']]
-        subprocess.call(["mv", "NMFJoint3WayIter%i/*"%NIters, foldername])
     else:
         #Do 2DNMF jointly on A and Ap, then filter B by A's dictionary
         foldername = "Joint2DNMFFiltered_K%i_Z%i_T%i_F%i_Trial%i"%(K, ZoomFac, T, F, Trial)
-        audioParams['foldername'] = foldername
         filename = "%s/NMF2DJoint.mat"%foldername
         if not os.path.exists(foldername):
             os.mkdir(foldername)
@@ -517,7 +592,6 @@ def testNMF2DMusic(K, T, F, NIters = 440, shiftrange = 6, ZoomFac = 8, \
         else:
             res = sio.loadmat(filename)
             [W1, W2, H1, H2] = [res['W1'], res['W2'], res['H1'], res['H2']]
-        subprocess.call(["mv", "NMF2DJointIter%i/*"%NIters, foldername])
     
     ## Step 3: Compute components and pitch shifted dictionaries
     (CsA, RatiosA) = getComplexNMF2DTemplates(CAOrig, W1, H1, ZoomFac, p = 2)
@@ -528,10 +602,8 @@ def testNMF2DMusic(K, T, F, NIters = 440, shiftrange = 6, ZoomFac = 8, \
         for s1, Ss, Ck, Ratios in zip(["A", "Ap", "B"], (SsA, SsAp, SsB), \
                     (CAk, CApk, CBk), (RatiosA[k], RatiosAp[k], RatiosB[k])):
             #First do phase correction and save result to disk
-            Xk = getiCQTNakamuraMatlab(eng, Ck, XSizes[s1], Fs, bins_per_octave)
+            Xk = getiNSGT(Ck, XSizes[s1], Fs, bins_per_octave)
             wavfile.write("%s/%s%i_iCQT.wav"%(foldername, s1, k), Fs, Xk)
-            (Xk, Spec) = getiCQTGriffinLimNakamuraMatlab(eng, Ck, XSizes[s1], Fs, bins_per_octave, NIters=100)
-            wavfile.write("%s/%s_%i.wav"%(foldername, s1, k), Fs, Xk)
             Xk = Xk.flatten()
             plt.clf()
             plt.plot(Ratios)
@@ -566,10 +638,11 @@ def testNMF2DMusic(K, T, F, NIters = 440, shiftrange = 6, ZoomFac = 8, \
         wavfile.write("%s/Bp%i.wav"%(foldername, k), Fs, X)
         SFinal += S
 
-    ## Step 5: Do Nakamura Phase Retrieval on the final mixed CQT
+    ## Step 5: Do Griffin Lim phase correction on the final mixed STFT
     X = griffinLimInverse(SFinal, winSize, hopSize)
     Y = X/np.max(np.abs(X))
     wavfile.write("%s/BpFinal.wav"%foldername, Fs, Y)
+
 
 def testDriedgerTranslate():
     import librosa
@@ -637,7 +710,8 @@ if __name__ == '__main__':
     #testNMF2DConvSynthetic()
     #testNMF2DConvJointSynthetic()
     #testNMF2DConvJoint3WaySynthetic()
+    #testHarmPercMusic()
     #testNMF1DMusic()
-    #testNMF2DMusic(K = 2, T = 20, F = 14, ZoomFac = 4, Joint3Way = False, doKL = True)
+    testNMF2DMusic(K = 2, T = 20, F = 14, ZoomFac = 2, Joint3Way = False, doKL = True)
     #testDriedgerTranslate()
-    doTrials()
+    #doTrials()
