@@ -100,7 +100,7 @@ def doNMF(V, K, L, W = np.array([]), plotfn = None):
             plt.savefig("NMF_%i.png"%(l+1), bbox_inches = 'tight')
     return (W, H)
 
-def doNMFDreidger(V, W, L, r = 7, p = 10, c = 3, plotfn = None):
+def doNMFDriedger(V, W, L, r = 7, p = 10, c = 3, plotfn = None):
     """
     Implement the technique from "Let It Bee-Towards NMF-Inspired
     Audio Mosaicing"
@@ -126,13 +126,13 @@ def doNMFDreidger(V, W, L, r = 7, p = 10, c = 3, plotfn = None):
         res=4
         plt.figure(figsize=(res*5, res))
         plotfn(V, W, H, 0, errs) 
-        plt.savefig("NMFDreidger_%i.png"%0, bbox_inches = 'tight')
+        plt.savefig("NMFDriedger_%i.png"%0, bbox_inches = 'tight')
     
     #Setup indicator matrices for diagonals
     [J, I] = np.meshgrid(np.arange(M), np.arange(K))
 
     for l in range(L):
-        print("NMF Dreidger iteration %i of %i"%(l+1, L))   
+        print("NMF Driedger iteration %i of %i"%(l+1, L))   
         iterfac = 1-float(l+1)/L       
         #Step 1: Avoid repeated activations
         print("Doing Repeated Activations...")
@@ -140,7 +140,8 @@ def doNMFDreidger(V, W, L, r = 7, p = 10, c = 3, plotfn = None):
         H[H<MuH] = H[H<MuH]*iterfac
         #Step 2: Restrict number of simultaneous activations
         print("Restricting simultaneous activations...")
-        colCutoff = -np.sort(-H, 0)[p, :]
+        #Use partitions instead of sorting for speed
+        colCutoff = -np.partition(-H, p, 0)[p, :] 
         H[H < colCutoff[None, :]] = H[H < colCutoff[None, :]]*iterfac
         #Step 3: Supporting time-continuous activations
         if c > 0:
@@ -164,7 +165,7 @@ def doNMFDreidger(V, W, L, r = 7, p = 10, c = 3, plotfn = None):
         if plotfn and ((l+1)==L):# or (l+1)%20 == 0):
             plt.clf()
             plotfn(V, W, H, l+1, errs)
-            plt.savefig("NMDreidger_%i.png"%(l+1), bbox_inches = 'tight')
+            plt.savefig("NMDriedger_%i.png"%(l+1), bbox_inches = 'tight')
     return H
 
 def shiftMatLRUD(X, di=0, dj=0):
@@ -517,7 +518,7 @@ def getComplexNMF1DTemplates(S, W, H, p = 2, audioParams = None):
     return (Ss, Ratios)
 
 
-def getComplexNMF2DTemplates(C, W, H, ZoomFac, p = 2, audioParams = None):
+def getComplexNMF2DTemplates(C, W, H, ZoomFac, p = 2):
     """
     Given a complex CQT spectrogram and a factorization WH ~= |S| of its magnitude
     spectrum, separate out the complex spectrogram into each of its components
@@ -526,9 +527,6 @@ def getComplexNMF2DTemplates(C, W, H, ZoomFac, p = 2, audioParams = None):
     :param H: A FxKxN matrix of frequency shifted source activations
     :param ZoomFac: Factor by which the CQT spectrogram has been downsampled
     :param p: Power for Weiner filter in soft mask matrices
-    :param audioParams: {'Fs':int, 'bins_per_octave':int, 'prefix':string\
-                         'eng':matlab engine handle, 'XSize':int}\
-        If specified, save each component to disk as a wav file
     """
     import scipy.ndimage
     K = W.shape[2]
@@ -552,26 +550,6 @@ def getComplexNMF2DTemplates(C, W, H, ZoomFac, p = 2, audioParams = None):
         Cs.append(C*As[k]/AsSum)
         Pow = np.abs(np.sum(Cs[k]*np.conj(Cs[k]), 0))
         Ratios.append(Pow/AllPow)
-    #Step 4: Save components if user requested
-    if audioParams:
-        from CQT import getiCQTGriffinLimNakamuraMatlab
-        [bins_per_octave, eng] = [audioParams['bins_per_octave'], audioParams['eng']]
-        [Fs, fileprefix, XSize] = [audioParams['Fs'], audioParams['prefix'], audioParams['XSize']]
-        import matplotlib.pyplot as plt
-        from scipy.io import wavfile
-        X = np.array([])
-        for k in range(K):
-            (Xk, Spec) = getiCQTGriffinLimNakamuraMatlab(eng, Cs[k], XSize, Fs, bins_per_octave, NIters=100)
-            if k == 0:
-                X = Xk
-            else:
-                X += Xk
-            wavfile.write("%s_%i.wav"%(fileprefix, k), Fs, Xk)
-            plt.clf()
-            plt.plot(Ratios[k])
-            plt.title("Ratio, %.3g Above 0.1"%(np.sum(Ratios[k] > 0.1)/Ratios[k].size))
-            plt.savefig("%s_%iPower.svg"%(fileprefix, k), bbox_inches = 'tight')
-        wavfile.write("%sNMF.wav"%fileprefix, Fs, X)
     return (Cs, Ratios)
 
 
@@ -684,6 +662,8 @@ def plotNMF2DConvSpectra(V, W, H, iter, errs, hopLength = -1):
         plt.subplot(2, 2+K, (2+K)+2+k+1)
         plt.imshow(H[:, k, :], cmap = 'afmhot', \
             interpolation = 'nearest', aspect = 'auto')
+        if hopLength > -1:
+            plt.gca().invert_yaxis()
         plt.colorbar()
         plt.title("H%i"%k)
 

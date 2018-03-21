@@ -119,7 +119,7 @@ def testNMF2DConvJointSynthetic():
         [res['W1'], res['W2'], res['H'], res['T'], res['F'], res['K']]
     A = multiplyConv2D(W1, H)
     Ap = multiplyConv2D(W2, H)
-    doNMF2DConvJointGPU(A, Ap, K, T, F, L, doKL = True, plotfn=plotNMF2DConvSpectraJoint)
+    doNMF2DConvJointGPU(A, Ap, K, T, F, L, doKL = False, plotfn=plotNMF2DConvSpectraJoint)
     #doNMF1DConv(V, K, T, L, plotfn=plotNMF1DConvSpectra)
 
 def testNMF2DConvJoint3WaySynthetic():
@@ -203,7 +203,7 @@ def testNMFJointSmoothCriminal():
 
 def testNMFMusaicingSimple():
     """
-    Try to replicate the results from the Dreidger paper
+    Try to replicate the results from the Driedger paper
     """
     import librosa
     winSize = 2048
@@ -220,7 +220,7 @@ def testNMFMusaicingSimple():
     fn = lambda V, W, H, iter, errs: plotNMFSpectra(V, W, H, iter, errs, hopSize)
     NIters = 50
     #(W, H) = doNMF(V, W.shape[1], NIters, W=W, plotfn = fn)
-    H = doNMFDreidger(V, W, NIters, r=7, p=10, c=6, plotfn=fn)
+    H = doNMFDriedger(V, W, NIters, r=7, p=10, c=6, plotfn=fn)
     H = np.array(H, dtype=np.complex)
     V2 = WComplex.dot(H)
 
@@ -384,7 +384,7 @@ def testNMF1DMusic():
         plt.plot(np.sum(As[i]**2, 0)/np.sum(AsSum**2, 0))
         plt.savefig("%s/TrackBManual%s.svg"%(foldername, i))
 
-    #Step 4: Do NMF Dreidger on one track of B at a time
+    #Step 4: Do NMF Driedger on one track of B at a time
     NIters = 100
     shiftrange = 6
     for i in range(len(SsA)):
@@ -396,7 +396,7 @@ def testNMF1DMusic():
         print("Doing track %i..."%i)
         HFilename = "%s/H%i.mat"%(foldername, i)
         if not os.path.exists(HFilename):
-            H = doNMFDreidger(np.abs(SsB[i]), np.abs(SsA[i]), NIters, \
+            H = doNMFDriedger(np.abs(SsB[i]), np.abs(SsA[i]), NIters, \
             r = 7, p = 10, c = 3, plotfn = fn)
             sio.savemat(HFilename, {"H":H})
         else:
@@ -404,7 +404,7 @@ def testNMF1DMusic():
         H = np.array(H, dtype=np.complex)
         S = SsA[i].dot(H)
         X = griffinLimInverse(S, winSize, hopSize)
-        wavfile.write("%s/B%i_Dreidger.wav"%(foldername, i), Fs, X)
+        wavfile.write("%s/B%i_Driedger.wav"%(foldername, i), Fs, X)
         S = SsAp[i].dot(H)
         X = griffinLimInverse(S, winSize, hopSize)
         Y = X/np.max(np.abs(X))
@@ -417,7 +417,8 @@ def testNMF1DMusic():
     wavfile.write("%s/BpFinal.wav"%foldername, Fs, Y)
     
 
-def testNMF2DMusic(K, T, F, NIters = 440, Joint3Way = False, doKL = False):
+def testNMF2DMusic(K, T, F, NIters = 440, shiftrange = 6, ZoomFac = 8, \
+                    Trial = 0, Joint3Way = False, doKL = False):
     """
     :param Joint3Way: If true, do a joint embedding with A, Ap, and B\
         If false, then do a joint embedding with (A, Ap) and represent\
@@ -426,6 +427,7 @@ def testNMF2DMusic(K, T, F, NIters = 440, Joint3Way = False, doKL = False):
     import librosa
     from scipy.io import wavfile
     import scipy.ndimage
+    import subprocess
     initParallelAlgorithms()
     eng = initMatlabEngine()
     doInitialInversions = False
@@ -434,25 +436,27 @@ def testNMF2DMusic(K, T, F, NIters = 440, Joint3Way = False, doKL = False):
     X = np.array(X, dtype=np.float32)
     A = X[:, 0]/(2.0**15)
     Ap = X[:, 1]/(2.0**15)
-    #Only take 15 seconds for initial experiments
+    #Take 20 seconds clips from each
     A = A[0:Fs*20]
     Ap = Ap[0:Fs*20]
-
     B, Fs = librosa.load("music/MJBad.mp3")
     B = B[Fs*3:Fs*23]
 
+    ## Step 1: Compute CQTs
     XSizes = {}
-
     bins_per_octave = 24
     hopSize = int(np.round(Fs/100.0)) #For librosa display to know approximate timescale
-    ZoomFac = 8 #Scaling factor so that each window is approximately 10ms
     NIters = 440
+
+    #STFT Params
+    winSize = 2048
+    hopSize = 256
 
     resOrig = {}
     res = {}
     for (V, s) in zip([A, Ap, B], ["A", "Ap", "B"]):
         print("Doing CQT of %s..."%s)
-        C = getCQTNakamuraMatlab(eng, V, Fs, bins_per_octave )
+        C = getCQTNakamuraMatlab(eng, V, Fs, bins_per_octave)
         resOrig[s] = C
         C = np.abs(C)
         C = scipy.ndimage.interpolation.zoom(C, (1, 1.0/ZoomFac))
@@ -471,49 +475,103 @@ def testNMF2DMusic(K, T, F, NIters = 440, Joint3Way = False, doKL = False):
     audioParams={'Fs':Fs, 'bins_per_octave':bins_per_octave, \
                 'prefix':'', 'eng':eng, 'XSizes':XSizes, "ZoomFac":ZoomFac}
 
+    ## Step 2: Compute joint NMF
     if Joint3Way:
-        #Do joint 2DNMF
-        plotfn = lambda A, Ap, B, W1, W2, H1, H2, iter, errs: \
-            plotNMF2DConvSpectraJoint3Way(A, Ap, B, W1, W2, H1, H2, iter, errs,\
-            hopLength = hopSize, audioParams=audioParams, useGPU = True)
-        (W1, W2, H1, H2) = doNMF2DConvJoint3WayGPU(CA, CAp, CB, K, T, F, L=NIters, \
-            doKL = doKL, plotfn=plotfn, plotInterval = NIters*2)
-        sio.savemat("SmoothCriminalAllNMF2DJoint.mat", {"W1":W1, "W2":W2, "H1":H1, "H2":H2})
-        #res = sio.loadmat("SmoothCriminalAllNMF2DJoint.mat")
-        #[W1, W2, H1, H2] = [res['W1'], res['W2'], res['H1'], res['H2']]
-        
-        #Output filtered sounds
-        foldername = "AllJoint2DNMFFiltered"
+        #Do Joint 3 Way 2DNMF
+        foldername = "Joint2DNMFFiltered3Way_K%i_Z%i_T%i_F%i_Trial%i"%(K, ZoomFac, T, F, Trial)
+        audioParams['foldername'] = foldername
+        filename = "%s/NMF2DJoint.mat"%foldername
+        if not os.path.exists(foldername):
+            os.mkdir(foldername)
+        if not os.path.exists(filename):
+            plotfn = lambda A, Ap, B, W1, W2, H1, H2, iter, errs, foldername: \
+                plotNMF2DConvSpectraJoint3Way(A, Ap, B, W1, W2, H1, H2, iter, errs,\
+                foldername, hopLength = hopSize, audioParams=audioParams, useGPU = True)
+            (W1, W2, H1, H2) = doNMF2DConvJoint3WayGPU(CA, CAp, CB, K, T, F, L=NIters, \
+                doKL = doKL, plotfn=plotfn, plotInterval = NIters*2, foldername = foldername)
+            sio.savemat(filename, {"W1":W1, "W2":W2, "H1":H1, "H2":H2})
+        else:
+            res = sio.loadmat(filename)
+            [W1, W2, H1, H2] = [res['W1'], res['W2'], res['H1'], res['H2']]
+        subprocess.call(["mv", "NMFJoint3WayIter%i/*"%NIters, foldername])
     else:
-        #Do 2DNMF jointly on A and Ap
-        plotfn = lambda A, Ap, W1, W2, H, iter, errs: \
-            plotNMF2DConvSpectraJoint(A, Ap, W1, W2, H, iter, errs, \
-            hopLength = hopSize, audioParams = audioParams)
-        (W1, W2, H1) = doNMF2DConvJointGPU(CA, CAp, K, T, F, L=NIters, doKL = doKL, plotfn = plotfn, \
-                                plotInterval=NIters*2)
-        #Represent B in the dictionary of A
-        plotfn = lambda V, W, H, iter, errs: \
-            plotNMF2DConvSpectra(V, W, H, iter, errs, hopLength = hopSize)
-        (W, H2) = doNMF2DConvGPU(CB, K, T, F, W=W1, L=NIters, doKL = doKL, \
-                                plotfn=plotfn, plotInterval=NIters*2)
-        sio.savemat("SmoothCriminalNMF2DJoint.mat", {"W1":W1, "W2":W2, "H1":H1, "H2":H2})
-        #res = sio.loadmat("SmoothCriminalNMF2DJoint.mat")
-        #[W1, W2, H1, H2] = [res['W1'], res['W2'], res['H1'], res['H2']]
+        #Do 2DNMF jointly on A and Ap, then filter B by A's dictionary
+        foldername = "Joint2DNMFFiltered_K%i_Z%i_T%i_F%i_Trial%i"%(K, ZoomFac, T, F, Trial)
+        audioParams['foldername'] = foldername
+        filename = "%s/NMF2DJoint.mat"%foldername
+        if not os.path.exists(foldername):
+            os.mkdir(foldername)
+        if not os.path.exists(filename):
+            plotfn = lambda A, Ap, W1, W2, H, iter, errs, foldername: \
+                plotNMF2DConvSpectraJoint(A, Ap, W1, W2, H, iter, errs, \
+                foldername, hopLength = hopSize, audioParams = audioParams)
+            (W1, W2, H1) = doNMF2DConvJointGPU(CA, CAp, K, T, F, L=NIters, doKL = doKL,\
+                                                 plotfn = plotfn, plotInterval=NIters*2, \
+                                                 foldername = foldername)
+            #Represent B in the dictionary of A
+            plotfn = lambda V, W, H, iter, errs: \
+                plotNMF2DConvSpectra(V, W, H, iter, errs, hopLength = hopSize)
+            (W, H2) = doNMF2DConvGPU(CB, K, T, F, W=W1, L=NIters, doKL = doKL, \
+                                    plotfn=plotfn, plotInterval=NIters*2)
+            sio.savemat(filename, {"W1":W1, "W2":W2, "H1":H1, "H2":H2})
+        else:
+            res = sio.loadmat(filename)
+            [W1, W2, H1, H2] = [res['W1'], res['W2'], res['H1'], res['H2']]
+        subprocess.call(["mv", "NMF2DJointIter%i/*"%NIters, foldername])
+    
+    ## Step 3: Compute components and pitch shifted dictionaries
+    (CsA, RatiosA) = getComplexNMF2DTemplates(CAOrig, W1, H1, ZoomFac, p = 2)
+    (CsAp, RatiosAp) = getComplexNMF2DTemplates(CApOrig, W2, H1, ZoomFac, p = 2)
+    (CsB, RatiosB) = getComplexNMF2DTemplates(CBOrig, W1, H2, ZoomFac, p = 2)
+    [SsA, SsAp, SsB] = [[], [], []]
+    for k, (CAk, CApk, CBk) in enumerate(zip(CsA, CsAp, CsB)):
+        for s1, Ss, Ck, Ratios in zip(["A", "Ap", "B"], (SsA, SsAp, SsB), \
+                    (CAk, CApk, CBk), (RatiosA[k], RatiosAp[k], RatiosB[k])):
+            #First do phase correction and save result to disk
+            Xk = getiCQTNakamuraMatlab(eng, Ck, XSizes[s1], Fs, bins_per_octave)
+            wavfile.write("%s/%s%i_iCQT.wav"%(foldername, s1, k), Fs, Xk)
+            (Xk, Spec) = getiCQTGriffinLimNakamuraMatlab(eng, Ck, XSizes[s1], Fs, bins_per_octave, NIters=100)
+            wavfile.write("%s/%s_%i.wav"%(foldername, s1, k), Fs, Xk)
+            Xk = Xk.flatten()
+            plt.clf()
+            plt.plot(Ratios)
+            plt.title("Ratio, %.3g Above 0.1"%(np.sum(Ratios[k] > 0.1)/Ratios[k].size))
+            plt.savefig("%s/%s_%iPower.svg"%(foldername, s1, k), bbox_inches = 'tight')
+            if s1 in ["A", "Ap"]:
+                #Make pitch shifted templates for A and A'
+                Ss.append(getPitchShiftedSpecs(Xk, Fs, winSize, hopSize, shiftrange=shiftrange))
+            else:
+                #Store plain STFT of B
+                Ss.append(STFT(Xk, winSize, hopSize))
+    
+    ## Step 4: Do NMF CQT-based Driedger on one track at a time
+    fn = lambda V, W, H, iter, errs: plotNMFSpectra(V, W, H, iter, errs, hopSize)
+    SFinal = np.zeros(SsB[0].shape, dtype = np.complex)
+    print("SFinal.shape = ", SFinal.shape)
+    for k in range(K):
+        print("Doing Driedger on track %i..."%k)
+        HFilename = "%s/DriedgerH%i.mat"%(foldername, k)
+        if not os.path.exists(HFilename):
+            H = doNMFDriedger(np.abs(SsB[k]), np.abs(SsA[k]), 100, \
+            r = 7, p = 10, c = 3, plotfn = fn)
+            sio.savemat(HFilename, {"H":H})
+        else:
+            H = sio.loadmat(HFilename)["H"]
+        H = np.array(H, dtype=np.complex)
+        S = SsA[k].dot(H)
+        X = griffinLimInverse(S, winSize, hopSize)
+        wavfile.write("%s/B%i_Driedger.wav"%(foldername, k), Fs, X)
+        S = SsAp[k].dot(H)
+        X = griffinLimInverse(S, winSize, hopSize)
+        wavfile.write("%s/Bp%i.wav"%(foldername, k), Fs, X)
+        SFinal += S
 
-        foldername = "Joint2DNMFFiltered"
-    if not os.path.exists(foldername):
-        os.mkdir(foldername)
-    audioParams['prefix'] = "%s/A"%foldername
-    audioParams['XSize'] = XSizes['A']
-    getComplexNMF2DTemplates(CAOrig, W1, H1, ZoomFac, p = 2, audioParams = audioParams)
-    audioParams['prefix'] = "%s/Ap"%foldername
-    audioParams['XSize'] = XSizes['Ap']
-    getComplexNMF2DTemplates(CApOrig, W2, H1, ZoomFac, p = 2, audioParams = audioParams)
-    audioParams['prefix'] = "%s/B"%foldername
-    audioParams['XSize'] = XSizes['B']
-    getComplexNMF2DTemplates(CBOrig, W1, H2, ZoomFac, p = 2, audioParams = audioParams)
+    ## Step 5: Do Nakamura Phase Retrieval on the final mixed CQT
+    X = griffinLimInverse(SFinal, winSize, hopSize)
+    Y = X/np.max(np.abs(X))
+    wavfile.write("%s/BpFinal.wav"%foldername, Fs, Y)
 
-def testDreidgerTranslate():
+def testDriedgerTranslate():
     import librosa
     from scipy.io import wavfile
     hopSize = 256
@@ -535,22 +593,22 @@ def testDreidgerTranslate():
         Fs, Ap = sio.wavfile.read("Example/Ap_%i.wav"%i)
         SsAp.append(getPitchShiftedSpecs(Ap, Fs, winSize, hopSize, shiftrange=shiftrange))
     
-    #Step 2: Do NMF Dreidger on one track at a time
+    #Step 2: Do NMF Driedger on one track at a time
     fn = lambda V, W, H, iter, errs: plotNMFSpectra(V, W, H, iter, errs, hopSize)
     XFinal = np.array([])
     for i in range(K):
         print("Doing track %i..."%i)
         HFilename = "Example/H%i.mat"%i
         if not os.path.exists(HFilename):
-            H = doNMFDreidger(np.abs(SsB[i]), np.abs(SsA[i]), NIters, \
-            r = 7, p = 10, c = 3, plotfn = fn)
+            H = doNMFDriedger(np.abs(SsB[i]), np.abs(SsA[i]), NIters, \
+                                    r = 7, p = 10, c = 3, plotfn = fn)
             sio.savemat("Example/H%i.mat"%i, {"H":H})
         else:
             H = sio.loadmat(HFilename)["H"]
         H = np.array(H, dtype=np.complex)
         S = SsA[i].dot(H)
         X = griffinLimInverse(S, winSize, hopSize)
-        wavfile.write("Example/B%i_Dreidger.wav"%i, Fs, X)
+        wavfile.write("Example/B%i_Driedger.wav"%i, Fs, X)
         S = SsAp[i].dot(H)
         X = griffinLimInverse(S, winSize, hopSize)
         Y = X/np.max(np.abs(X))
@@ -562,9 +620,14 @@ def testDreidgerTranslate():
     Y = XFinal/np.max(np.abs(XFinal))
     wavfile.write("Example/BpFinal.wav", Fs, Y)
     
-
-    
-
+def doTrials():
+    NTrials = 2
+    for K in [3, 4]:
+        for T in [10, 15]:
+            for Trial in range(NTrials):
+                for Joint3Way in [False, True]:
+                    testNMF2DMusic(K = K, T = T, F = 14, ZoomFac = 8, \
+                                    Trial = Trial, Joint3Way = Joint3Way, doKL = True)
 
 if __name__ == '__main__':
     #testNMFMusaicingSimple()
@@ -575,5 +638,6 @@ if __name__ == '__main__':
     #testNMF2DConvJointSynthetic()
     #testNMF2DConvJoint3WaySynthetic()
     #testNMF1DMusic()
-    testNMF2DMusic(K = 2, T = 24, F = 14, Joint3Way = True, doKL = True)
-    #testDreidgerTranslate()
+    #testNMF2DMusic(K = 2, T = 20, F = 14, ZoomFac = 4, Joint3Way = False, doKL = True)
+    #testDriedgerTranslate()
+    doTrials()

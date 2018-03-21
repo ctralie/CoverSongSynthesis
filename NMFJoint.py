@@ -278,7 +278,7 @@ def getJointError(A, Ap, W1, W2, H, errfn, mulfn):
     res += errfn(Ap, mulfn(W2, H))
     return res
 
-def doNMF2DConvJoint(A, Ap, K, T, F, L, prefix = "", doKL = False, plotfn = None):
+def doNMF2DConvJoint(A, Ap, K, T, F, L, foldername = ".", doKL = False, plotfn = None):
     """
     Do a joint version of 2DNMF solving for W1, W2, and H, where 
     A ~= W1*H and Ap ~= W2*H
@@ -313,11 +313,8 @@ def doNMF2DConvJoint(A, Ap, K, T, F, L, prefix = "", doKL = False, plotfn = None
     if plotfn:
         res=4
         plt.figure(figsize=((2+K)*res, 2*res))
-        plotfn(A, Ap, W1, W2, H, 0, errs)
-        pre = "%sNMF2DJointIter%i"%(prefix, 0)
-        if not os.path.exists(pre):
-            os.mkdir(pre)
-        plt.savefig("%s/NMF2DConvJoint_%i.png"%(pre, 0), bbox_inches = 'tight')
+        plotfn(A, Ap, W1, W2, H, 0, errs, foldername)
+        plt.savefig("%s/NMF2DConvJoint_%i.png"%(foldername, 0), bbox_inches = 'tight')
     for l in range(L):
         print("Joint 2DNMF iteration %i of %i"%(l+1, L))
         #Step 1: Update Ws
@@ -336,11 +333,8 @@ def doNMF2DConvJoint(A, Ap, K, T, F, L, prefix = "", doKL = False, plotfn = None
         errs.append([errfn(A, multiplyConv2D(W1, H)), errfn(Ap, multiplyConv2D(W2, H))])
         if plotfn and ((l+1) == L or (l+1)%60 == 0):
             plt.clf()
-            plotfn(A, Ap, W1, W2, H, l+1, errs)
-            pre = "%sNMF2DJointIter%i"%(prefix, l+1)
-            if not os.path.exists(pre):
-                os.mkdir(pre)
-            plt.savefig("%s/NMF2DConvJoint_%i.png"%(pre, l+1), bbox_inches = 'tight')
+            plotfn(A, Ap, W1, W2, H, l+1, errs, foldername)
+            plt.savefig("%s/NMF2DConvJoint_%i.png"%(foldername, l+1), bbox_inches = 'tight')
     return (W1, W2, H)
 
 
@@ -350,7 +344,7 @@ def getJoint3WayError(A, Ap, B, W1, W2, H1, H2, errfn, mulfn):
     res += errfn(B, mulfn(W1, H2))
     return res
 
-def doNMF2DConvJoint3Way(A, Ap, B, K, T, F, L, plotfn = None, prefix = "", eps = 1e-20):
+def doNMF2DConvJoint3Way(A, Ap, B, K, T, F, L, plotfn = None, foldername = ".", eps = 1e-20):
     """
     A version of 2DNMF that jointly solves for W1, H1, W2, and H2 that
     satisfy W1*H1 ~= A, W2*H1 ~= Ap, and W2*H1 ~= B
@@ -383,9 +377,8 @@ def doNMF2DConvJoint3Way(A, Ap, B, K, T, F, L, plotfn = None, prefix = "", eps =
     if plotfn:
         res=4
         plt.figure(figsize=((8+2*K)*res*1.2, 2*res))
-        plotfn(A, Ap, B, W1, W2, H1, H2, 0, errs)
-        pre = "%sNMFJointIter3Way%i"%(prefix, 0)
-        plt.savefig("%s/NMF2DConvJoint3Way%i.png"%(pre, 0), bbox_inches = 'tight')
+        plotfn(A, Ap, B, W1, W2, H1, H2, 0, errs, foldername)
+        plt.savefig("%s/NMF2DConvJoint3Way%i.png"%(foldername, 0), bbox_inches = 'tight')
     for l in range(L):
         print("Joint 3Way 2DNMF iteration %i of %i"%(l+1, L))
         tic = time.time()
@@ -452,9 +445,8 @@ def doNMF2DConvJoint3Way(A, Ap, B, K, T, F, L, plotfn = None, prefix = "", eps =
         errs.append(getJoint3WayError(A, Ap, B, W1, W2, H1, H2, getEuclideanError, multiplyConv2D))
         if plotfn and ((l+1) == L or (l+1)%30 == 0):
             plt.clf()
-            plotfn(A, Ap, B, W1, W2, H1, H2, l+1, errs)
-            pre = "%sNMFJoint3WayIter%i"%(prefix, l+1)
-            plt.savefig("%s/NMF2DConvJoint3Way%i.png"%(pre, l+1), bbox_inches = 'tight')
+            plotfn(A, Ap, B, W1, W2, H1, H2, l+1, errs, foldername)
+            plt.savefig("%s/NMF2DConvJoint3Way%i.png"%(foldername, l+1), bbox_inches = 'tight')
     return (W1, W2, H1, H2)
 
 
@@ -580,8 +572,8 @@ def plotNMF1DConvSpectraJoint(V, W, H, iter, errs, hopLength = -1, plotComponent
             plt.plot(H[k, :])
             plt.title("H%i"%k)
 
-def plotNMF2DConvSpectraJoint(A, Ap, W1, W2, H, iter, errs, hopLength = -1, plotComponents = True, \
-        audioParams = None):
+def plotNMF2DConvSpectraJoint(A, Ap, W1, W2, H, iter, errs, foldername, \
+                                hopLength = -1, plotComponents = True, audioParams = None):
     """
     Plot NMF iterations on a log scale, showing V, H, and W*H, with the understanding
     that V and W are two songs concatenated on top of each other
@@ -594,6 +586,7 @@ def plotNMF2DConvSpectraJoint(A, Ap, W1, W2, H, iter, errs, hopLength = -1, plot
     """
     import librosa
     import librosa.display
+    import scipy.ndimage
     import os
     K = W1.shape[2]
     if not plotComponents:
@@ -608,13 +601,9 @@ def plotNMF2DConvSpectraJoint(A, Ap, W1, W2, H, iter, errs, hopLength = -1, plot
         from CQT import getiCQTGriffinLimNakamuraMatlab, getTemplateNakamura
         from scipy.io import wavfile
         
-        [Fs, prefix] = [audioParams['Fs'], audioParams['prefix']]
-        [eng, XSizes] = [audioParams['eng'], audioParams['XSizes']]
+        [Fs, eng, XSizes] = [audioParams['Fs'], audioParams['eng'], audioParams['XSizes']]
         ZoomFac = audioParams['ZoomFac']
         bins_per_octave = audioParams['bins_per_octave']
-        pre = "%sNMF2DJointIter%i"%(prefix, iter)
-        if not os.path.exists(pre):
-            os.mkdir(pre)
         #Invert the audio
         if bins_per_octave > -1:
             #Step 1: Invert the approximations
@@ -624,14 +613,14 @@ def plotNMF2DConvSpectraJoint(A, Ap, W1, W2, H, iter, errs, hopLength = -1, plot
                 (y_hat, spec) = getiCQTGriffinLimNakamuraMatlab(eng, LamZoom, XSizes[s1], Fs, \
                     bins_per_octave, NIters=100, randPhase = True)
                 y_hat = y_hat/np.max(np.abs(y_hat))
-                sio.wavfile.write("%s/%s.wav"%(pre, s1), Fs, y_hat)
+                sio.wavfile.write("%s/%s.wav"%(foldername, s1), Fs, y_hat)
             #Step 2: Invert the templates
             for (s1, thisW) in zip(["A", "Ap"], (W1, W2)):
                 for k in range(K):
                     y_hat = getTemplateNakamura(eng, thisW[:, :, k].T, A.shape, \
                                         ZoomFac, bins_per_octave, XSizes[s1], Fs)
                     y_hat = y_hat/np.max(np.abs(y_hat))
-                    sio.wavfile.write("%s/%s_W%i.wav"%(pre, s1, k), Fs, y_hat)
+                    sio.wavfile.write("%s/%s_W%i.wav"%(foldername, s1, k), Fs, y_hat)
 
     plt.subplot(3, 2+K, 1)
     if hopLength > -1:
@@ -701,12 +690,13 @@ def plotNMF2DConvSpectraJoint(A, Ap, W1, W2, H, iter, errs, hopLength = -1, plot
             plt.title("W2_%i"%k)
             plt.subplot(3, 2+K, (2+K)*2+3+k)
             plt.imshow(H[:, k, :], cmap = 'afmhot', interpolation = 'nearest', aspect = 'auto')
+            if hopLength > -1:
+                plt.gca().invert_yaxis()
             plt.title("H%i"%k)
 
 
-def plotNMF2DConvSpectraJoint3Way(A, Ap, B, W1, W2, H1, H2, iter, errs, \
-        hopLength = -1, prefix = "", audioParams = None, plotElems = True, \
-        useGPU = False):
+def plotNMF2DConvSpectraJoint3Way(A, Ap, B, W1, W2, H1, H2, iter, errs, foldername, \
+        hopLength = -1, audioParams = None, plotElems = True, useGPU = False):
     """
     Plot NMF iterations on a log scale, showing V, H, and W*H
     :param A: An M x N1 matrix for song A
@@ -728,15 +718,11 @@ def plotNMF2DConvSpectraJoint3Way(A, Ap, B, W1, W2, H1, H2, iter, errs, \
     if not plotElems:
         K = 0
 
-    pre = "%sNMFJoint3WayIter%i"%(prefix, iter)
-    if not os.path.exists(pre):
-        os.mkdir(pre)
-
     if audioParams:
         from CQT import getCQTNakamuraMatlab, getiCQTGriffinLimNakamuraMatlab
         from CQT import getTemplateNakamura
         from scipy.io import wavfile
-        [Fs, prefix] = [audioParams['Fs'], audioParams['prefix']]
+        Fs = audioParams['Fs']
         [eng, XSizes] = [audioParams['eng'], audioParams['XSizes']]
         ZoomFac = audioParams['ZoomFac']
         bins_per_octave = -1
@@ -751,7 +737,7 @@ def plotNMF2DConvSpectraJoint3Way(A, Ap, B, W1, W2, H1, H2, iter, errs, \
                 y_hat = getTemplateNakamura(eng, thisW[:, :, k].T, A.shape, \
                                     ZoomFac, bins_per_octave, XSizes[s1], Fs)
                 y_hat = y_hat/np.max(np.abs(y_hat))
-                sio.wavfile.write("%s/%s_W%i.wav"%(pre, s1, k), Fs, y_hat)
+                sio.wavfile.write("%s/%s_W%i.wav"%(foldername, s1, k), Fs, y_hat)
     from NMFGPU import multiplyConv2DGPU
     import pycuda.gpuarray as gpuarray
     if useGPU:
@@ -768,7 +754,7 @@ def plotNMF2DConvSpectraJoint3Way(A, Ap, B, W1, W2, H1, H2, iter, errs, \
         Lam12 = multiplyConv2D(W1, H2)
         Lam21 = multiplyConv2D(W2, H1)
         Lam22 = multiplyConv2D(W2, H2)
-    sio.savemat("%s/Iter%i.mat"%(pre, iter), {"W1":W1, "W2":W2, "H1":H1, "H2":H2,\
+    sio.savemat("%s/Iter%i.mat"%(foldername, iter), {"W1":W1, "W2":W2, "H1":H1, "H2":H2,\
         "Lam11":Lam11, "Lam12":Lam12, "Lam21":Lam21, "Lam22":Lam22})
     for k, (V, Lam, s1, s2) in enumerate(zip([A, Ap, B, None], [Lam11, Lam21, Lam12, Lam22], \
             ["A", "Ap", "B", "Bp"],\
@@ -799,7 +785,7 @@ def plotNMF2DConvSpectraJoint3Way(A, Ap, B, W1, W2, H1, H2, iter, errs, \
                 (y_hat, spec) = getiCQTGriffinLimNakamuraMatlab(eng, LamZoom, XSizes[s1], Fs, \
                     bins_per_octave, NIters=100, randPhase = True)
                 y_hat = y_hat/np.max(np.abs(y_hat))
-                sio.wavfile.write("%s/%s.wav"%(pre, s1), Fs, y_hat)
+                sio.wavfile.write("%s/%s.wav"%(foldername, s1), Fs, y_hat)
     plt.subplot(2, 8+2*K, 4)
     errs = np.array(errs)
     if len(errs) > 1:
@@ -831,11 +817,15 @@ def plotNMF2DConvSpectraJoint3Way(A, Ap, B, W1, W2, H1, H2, iter, errs, \
         plt.subplot(2, 8+2*K, K+4+k+1)
         plt.imshow(H1[:, k, :], cmap = 'afmhot', \
             interpolation = 'nearest', aspect = 'auto')
+        if hopLength > -1:
+            plt.gca().invert_yaxis()
         plt.colorbar()
         plt.title("H1%i"%k)
 
         plt.subplot(2, 8+2*K, 8+2*K+4+K+k+1)
         plt.imshow(H2[:, k, :], cmap = 'afmhot', \
             interpolation = 'nearest', aspect = 'auto')
+        if hopLength > -1:
+            plt.gca().invert_yaxis()
         plt.colorbar()
         plt.title("H2%i"%k)

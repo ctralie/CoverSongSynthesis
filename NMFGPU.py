@@ -23,6 +23,7 @@ def getResourceString(filename):
 MatMulNaive_ = None
 MatMulConv2D_ = None
 ZerosToOnes_ = None
+bitonicSortNonneg_ = None
 TileWDenom_ = None
 TileHDenom_ = None
 
@@ -40,11 +41,13 @@ def initParallelAlgorithms():
     global ZerosToOnes_
     global TileWDenom_
     global TileHDenom_
+    global bitonicSortNonneg_
     s = getResourceString("OtherUtils.cu")
     mod = SourceModule(s)
     ZerosToOnes_ = mod.get_function("ZerosToOnes")
     TileWDenom_ = mod.get_function("TileWDenom")
     TileHDenom_ = mod.get_function("TileHDenom")
+    bitonicSortNonneg_ = mod.get_function("bitonicSortNonneg")
 
     linalg.init()
     skcuda.misc.init()
@@ -91,6 +94,22 @@ def ZerosToOnes(V, eps = 0.0):
     eps = np.array(eps, dtype = np.float32)
     ZerosToOnes_(V, M, N, eps, block=(blockdim, blockdim, 1), \
         grid=(GridDimM, GridDimN))
+
+def bitonicSortNonneg(XG, blockdim = 32):
+    M = np.int32(XG.shape[0])
+    N = np.int32(XG.shape[1])
+    NPow2 = np.int32(2**np.ceil(np.log2(N)))
+    N2 = NPow2/2;
+    #Pad with -1s as dummy values
+    XGPow2 = -np.ones((M, NPow2), dtype = np.float32)
+    XGPow2 = gpuarray.to_gpu(XGPow2)
+    XGPow2[:, 0:N] = XG.copy()
+
+    print("NPow2 = ", NPow2)
+    GridDimM = int(np.ceil(1.0*M/blockdim))
+    GridDimN = int(np.ceil(1.0*N2/blockdim))
+    bitonicSortNonneg_(XG, XGPow2, M, N, NPow2, block=(blockdim, blockdim, 1), \
+                grid=(GridDimM, GridDimN))
 
 def getEuclideanErrorGPU(V, WH):
     """
@@ -407,7 +426,7 @@ def doNMF2DConvGPU(V, K, T, F, L, W = np.array([]), doKL = False, plotfn = None,
 
 
 def doNMF2DConvJointGPU(A, Ap, K, T, F, L, W = np.array([]), doKL = False, plotfn = None, \
-    plotInterval = 60, plotFirst = False, prefix = "", errfn = getEuclideanErrorGPU):
+    plotInterval = 60, plotFirst = False, foldername = ".", errfn = getEuclideanErrorGPU):
     """
     Do a joint version of 2DNMF solving for W1, W2, and H, where 
     A ~= W1*H and Ap ~= W2*H
@@ -448,12 +467,9 @@ def doNMF2DConvJointGPU(A, Ap, K, T, F, L, W = np.array([]), doKL = False, plotf
     if plotfn:
         res=4
         plt.figure(figsize=((2+K)*res, 2*res))
-        pre = "%sNMF2DJointIter%i"%(prefix, 0)
-        if not os.path.exists(pre):
-            os.mkdir(pre)
         if plotFirst:
-            plotfn(A.get(), Ap.get(), W1.get(), W2.get(), H.get(), 0, errs)
-            plt.savefig("%s/NMF2DConvJoint_%i.png"%(pre, 0), bbox_inches = 'tight')
+            plotfn(A.get(), Ap.get(), W1.get(), W2.get(), H.get(), 0, errs, foldername)
+            plt.savefig("%s/NMF2DConvJoint_%i.png"%(foldername, 0), bbox_inches = 'tight')
     for l in range(L):
         print("Joint 2DNMF iteration %i of %i"%(l+1, L))
         tic = time.time()
@@ -479,18 +495,15 @@ def doNMF2DConvJointGPU(A, Ap, K, T, F, L, W = np.array([]), doKL = False, plotf
         errs.append([errfn(A, multiplyConv2DGPU(W1, H)), errfn(Ap, multiplyConv2DGPU(W2, H))])
         if plotfn and ((l+1) == L or (l+1)%plotInterval == 0):
             plt.clf()
-            plotfn(A.get(), Ap.get(), W1.get(), W2.get(), H.get(), l+1, errs)
-            pre = "%sNMF2DJointIter%i"%(prefix, l+1)
-            if not os.path.exists(pre):
-                os.mkdir(pre)
-            plt.savefig("%s/NMF2DConvJoint_%i.png"%(pre, l+1), bbox_inches = 'tight')
+            plotfn(A.get(), Ap.get(), W1.get(), W2.get(), H.get(), l+1, errs, foldername)
+            plt.savefig("%s/NMF2DConvJoint_%i.png"%(foldername, l+1), bbox_inches = 'tight')
         print("Elapsed Time: %.3g"%(time.time()-tic))
     return (W1.get(), W2.get(), H.get())
 
 
 
 def doNMF2DConvJoint3WayGPU(A, Ap, B, K, T, F, L, doKL = False, plotfn = None, \
-         prefix = "", plotInterval = 60, plotFirst = False):
+         foldername = ".", plotInterval = 60, plotFirst = False):
     """
     A version of 2DNMF that jointly solves for W1, H1, W2, and H2 that
     satisfy W1*H1 ~= A, W2*H1 ~= Ap, and W2*H1 ~= B
@@ -538,11 +551,11 @@ def doNMF2DConvJoint3WayGPU(A, Ap, B, K, T, F, L, doKL = False, plotfn = None, \
         res=4
         plt.figure(figsize=((8+2*K)*res*1.2, 2*res))
         if plotFirst:
-            plotfn(A.get(), Ap.get(), B.get(), W1.get(), W2.get(), H1.get(), H2.get(), 0, errs)
-            pre = "%sNMFJoint3WayIter%i"%(prefix, 0)
-            plt.savefig("%s/NMF2DConvJoint_%i.png"%(pre, 0), bbox_inches = 'tight')
+            plotfn(A.get(), Ap.get(), B.get(), W1.get(), W2.get(), H1.get(), H2.get(), \
+                    0, errs, foldername)
+            plt.savefig("%s/NMF2DConvJoint3Way_%i.png"%(foldername, 0), bbox_inches = 'tight')
     for l in range(L):
-        print("Joint 2DNMF iteration %i of %i"%(l+1, L))
+        print("Joint 2DNMF 3 way iteration %i of %i"%(l+1, L))
         tic = time.time()
         #Step 1: Update Ws
         Lam11 = multiplyConv2DGPU(W1, H1)
@@ -579,10 +592,77 @@ def doNMF2DConvJoint3WayGPU(A, Ap, B, K, T, F, L, doKL = False, plotfn = None, \
         print("Elapsed Time: %.3g"%(time.time()-tic))
         if plotfn and ((l+1) == L or (l+1)%plotInterval == 0):
             plt.clf()
-            plotfn(A.get(), Ap.get(), B.get(), W1.get(), W2.get(), H1.get(), H2.get(), l+1, errs)
-            pre = "%sNMFJoint3WayIter%i"%(prefix, l+1)
-            plt.savefig("%s/NMF2DConvJoint_%i.png"%(pre, l+1), bbox_inches = 'tight')
+            plotfn(A.get(), Ap.get(), B.get(), W1.get(), W2.get(), H1.get(), H2.get(), \
+                    l+1, errs, foldername)
+            plt.savefig("%s/NMF2DConvJoint3Way_%i.png"%(foldername, l+1), bbox_inches = 'tight')
     return (W1.get(), W2.get(), H1.get(), H2.get())
+
+
+def doNMFDriedgerGPU(V, W, L, r = 7, p = 10, c = 3, plotfn = None):
+    ####TODO: This GPU translation is incomplete at the moment
+    """
+    Implement the technique from "Let It Bee-Towards NMF-Inspired
+    Audio Mosaicing" on the GPU
+    :param V: M x N target matrix
+    :param W: An M x K matrix of template sounds in some time order\
+        along the second axis
+    :param L: Number of iterations
+    :param r: Width of the repeated activation filter
+    :param p: Degree of polyphony; i.e. number of values in each column\
+        of H which should be un-shrunken
+    :param c: Half length of time-continuous activation filter
+    :return H: A KxM array of activations
+    """
+    import scipy.ndimage
+    N = V.shape[0]
+    M = V.shape[1]
+    K = W.shape[1]
+    tic = time.time()
+    V = gpuarray.to_gpu(np.array(V, dtype=np.float32))
+    W = gpuarray.to_gpu(np.array(W, dtype=np.float32))
+    H = gpuarray.to_gpu(np.array(np.random.rand(K, M), dtype=np.float32))
+    errs = [getKLErrorGPU(V, linalg.dot(W, H))]
+    if plotfn:
+        res=4
+        plt.figure(figsize=(res*5, res))
+        plotfn(V.get(), W.get(), H.get(), 0, errs) 
+        plt.savefig("NMFDriedger_%i.png"%0, bbox_inches = 'tight')
+
+    for l in range(L):
+        print("NMF Driedger iteration %i of %i"%(l+1, L))   
+        iterfac = 1-float(l+1)/L       
+        #Step 1: Avoid repeated activations
+        print("Doing Repeated Activations...")
+        MuH = scipy.ndimage.filters.maximum_filter(H, size=(1, r))
+        H[H<MuH] = H[H<MuH]*iterfac
+        #Step 2: Restrict number of simultaneous activations
+        print("Restricting simultaneous activations...")
+        colCutoff = -np.sort(-H, 0)[p, :]
+        H[H < colCutoff[None, :]] = H[H < colCutoff[None, :]]*iterfac
+        #Step 3: Supporting time-continuous activations
+        if c > 0:
+            print("Supporting time-continuous activations...")
+            for k in range(-H.shape[0]+1, H.shape[1]):
+                z = np.cumsum(np.concatenate((np.zeros(c), np.diag(H, k), np.zeros(c))))
+                x2 = z[2*c::] - z[0:-2*c]
+                H[np.diag(I, k), np.diag(J, k)] = x2
+        #KL Divergence Version
+        tic = time.time()
+        WH = W.dot(H)
+        WH[WH == 0] = 1
+        VLam = V/WH
+        print("VLam Elapsed Time: %.3g"%(time.time() - tic))
+        tic = time.time()
+        WDenom = np.sum(W, 0)
+        WDenom[WDenom == 0] = 1
+        H = H*((W.T).dot(VLam)/WDenom[:, None])
+        print("Elapsed Time H Update %.3g"%(time.time() - tic))
+        errs.append(getKLError(V, W.dot(H)))
+        if plotfn and ((l+1)==L):# or (l+1)%20 == 0):
+            plt.clf()
+            plotfn(V, W, H, l+1, errs)
+            plt.savefig("NMDriedger_%i.png"%(l+1), bbox_inches = 'tight')
+    return H
 
 def testNMF2DMultiplyGPU():
     initParallelAlgorithms()
@@ -709,9 +789,22 @@ def testKLGradient():
     print("Elapsed Time GPU: %.3g"%(time.time() - tic))
     print("All Close H Ratio: ", np.allclose(HRatio, HRatioGPU.get()))
 
-
+def testDriedgerComponents():
+    initParallelAlgorithms()
+    np.random.seed(100)
+    X = np.array(np.random.randn(1723, 22519), dtype=np.float32)
+    XGPU = gpuarray.to_gpu(X)
+    tic = time.time()
+    XSorted = np.sort(X, 1)
+    print("Elapsed Time CPU: %.3g"%(time.time()-tic))
+    tic = time.time()
+    bitonicSortNonneg(XGPU)
+    print("Elapsed Time GPU: %.3g"%(time.time()-tic))
+    plot3Diff(XSorted, XGPU.get())
+    plt.show()
 
 if __name__ == '__main__':
     #testNMF2DMultiplyGPU()
     #testNMF2DWGradientGPU()
-    testKLGradient()
+    #testKLGradient()
+    testDriedgerComponents()

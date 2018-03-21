@@ -39,7 +39,7 @@ def getCQTNakamuraMatlab(eng, X, fs, resol=24, memCall = False):
         eng.CQT()
         return sio.loadmat("CQTTemp.mat")["C"]
 
-def getiCQTNakamuraMatlab(eng, C, T, fs, resol, memCall = False):
+def getiCQTNakamuraMatlab(eng, C, T, fs, resol = 24, memCall = False):
     """
     Wrap around Nakamura's Matalb code to compute the iCQT
     :param eng: Matlab engine handle
@@ -64,7 +64,7 @@ def getiCQTNakamuraMatlab(eng, C, T, fs, resol, memCall = False):
         eng.iCQT()
         return sio.loadmat("CQTTemp.mat")['rec']
 
-def getiCQTGriffinLimNakamuraMatlab(eng, C, T, fs, resol, NIters = 20, \
+def getiCQTGriffinLimNakamuraMatlab(eng, C, T, fs, resol = 24, NIters = 20, \
         randPhase = False, memCall = False):
     """
     Wrap around Nakamura's Matalb code to compute Griffin Lim iCQT
@@ -155,6 +155,32 @@ def getiNSGTGriffinLim(C, L, Fs, resol=24, randPhase = False, NIters = 20):
     X = nsgt.backward(A)
     return np.real(X)
 
+def getPitchShiftedAbsCQTs(C, shiftrange = 6, GapWins = 10):
+    """
+    Concatenate a bunch of pitch shifted versions of the absolute
+    magnitude CQTs of a sound
+    :param C: A NBins x NFrames CQT array
+    :param shiftrange: The number of halfsteps below and above which \
+        to shift the sound
+    :param GapWins: The length of the gap to include between \
+        pitch shifted CQTs
+    :returns CRet: The concatenate spectrogram with all pitch shifts
+    """
+    CRet = np.array([])
+    for shift in range(-shiftrange, shiftrange+1):
+        thisC = np.array(C)
+        if shift < 0:
+            thisC[0:shift, :] = thisC[-shift::, :]
+            thisC[shift::, :] = 0
+        elif shift > 0:
+            thisC[shift::, :] = thisC[0:-shift, :]
+            thisC[0:shift, :] = 0
+        if CRet.size == 0:
+            CRet = thisC
+        else:
+            Gap = np.zeros((C.shape[0], GapWins))
+            CRet = np.concatenate((CRet, Gap, thisC), 1)
+    return CRet
 
 def testNakamura(X, Fs):
     """
@@ -183,6 +209,7 @@ def testNSGT(X, Fs, NIters = 100):
     Test Thomas Grill's NSGT technique on phase retrieval 
     with and without pitch shifting
     """
+    from scipy.io import wavfile
     C = getNSGT(X, Fs)
     C = np.abs(C)
     #Test regular inversion
@@ -192,8 +219,19 @@ def testNSGT(X, Fs, NIters = 100):
     C2 = np.zeros(C.shape)
     steps = 3
     C2[0:-steps*2, :] = C[steps*2::, :]
-    Z = getiNSGTGriffinLim(C2, len(X), Fs, randPhase=True, NIters = NIters)
+    Z = getiNSGTGriffinLim(C2, len(X)*13, Fs, randPhase=True, NIters = NIters)
     wavfile.write("reconShiftNSGT.wav", Fs, Z)
+
+def testNakamuraBlur(X, Fs, NIters = 100, ZoomFac = 8):
+    import scipy.ndimage
+    from scipy.io import wavfile
+    eng = initMatlabEngine()
+    C = getCQTNakamuraMatlab(eng, X, Fs)
+    if ZoomFac > 1:
+        C = scipy.ndimage.interpolation.zoom(np.abs(C), (1, 1.0/ZoomFac))
+        C = scipy.ndimage.interpolation.zoom(np.abs(C), (1, ZoomFac))
+    (X, spec) = getiCQTGriffinLimNakamuraMatlab(eng, C, len(X), Fs, randPhase=True, NIters = NIters)
+    wavfile.write("blur%iNakamura.wav"%ZoomFac, Fs, X)
 
 if __name__ == '__main__':
     from scipy.io import wavfile
@@ -202,3 +240,4 @@ if __name__ == '__main__':
     A = A[0:Fs*30]
     testNSGT(A, Fs)
     testNakamura(A, Fs)
+    #testNakamuraBlur(A, Fs, ZoomFac = 2)

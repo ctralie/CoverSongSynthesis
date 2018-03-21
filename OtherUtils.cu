@@ -58,3 +58,71 @@ __global__ void TileHDenom(float* HDenomIn, float* HDenomOut, int F, int K, int 
         }
     }
 }
+
+
+//TODO: Bitonic sort doesn't work yet, and it's slow in global memory
+__global__ void bitonicSortNonneg(float* X, float* XPow2, int M, int N, int NPow2) {
+    /*
+    Do a bitonic sort so that every row of a matrix X is in sorted
+    order
+    :param X: Pointer to matrix
+    :param XPow2: Pointer to matrix holding power of 2 zeropadded X
+    :param M: Size of each column of X
+    :param N: Size of each row of X
+    :param NPow2: Size of each row of X rounded up to nearest power of 2
+    */
+    extern __shared__ float x[];
+    int i = blockIdx.x*blockDim.x + threadIdx.x;
+    int j = blockIdx.y*blockDim.y + threadIdx.y;
+    int j1, j2;
+    float x1, x2;
+    float min, max;
+    int size = 2;
+    int stride;
+    int diffPow2 = (NPow2 - N);
+
+    if (i >= M || j >= NPow2) {
+        return;
+    }
+
+    //Step 2: Perform bitonic sort
+    while (size < NPow2 << 1) {
+        stride = size >> 1;
+        while (stride > 0) {
+            j1 = stride*2*(j/stride) + j%stride;
+            j2 = j1 + stride;
+            x1 = XPow2[i*NPow2 + j1];
+            x2 = XPow2[i*NPow2 + j2];
+            if (x1 < x2) {
+                min = x1;
+                max = x2;
+            }
+            else {
+                min = x2;
+                max = x1;
+            }
+            if (j/(size/2)%2 > 0) {
+                XPow2[i*NPow2 + j1] = min;
+                XPow2[i*NPow2 + j2] = max;
+            }
+            else {
+                XPow2[i*NPow2 + j1] = max;
+                XPow2[i*NPow2 + j2] = min;
+            }
+            stride = stride >> 1;
+            __syncthreads();
+        }
+        size = size << 1;
+    }
+
+    //Step 3: Copy Result Back, noting that the first (NPow2-N)
+    //values in each row are dummy values
+    j = j*2;
+    if (j >= diffPow2) {
+        X[i*N + j - diffPow2] = XPow2[i*N + j];
+    }
+    j++;
+    if (j >= diffPow2) {
+        X[i*N + j - diffPow2] = XPow2[i*N + j];
+    }
+}
