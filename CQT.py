@@ -202,6 +202,34 @@ def getPitchShiftedAbsCQTs(C, shiftrange = 6, GapWins = 10):
             CRet = np.concatenate((CRet, Gap, thisC), 1)
     return CRet
 
+def getPitchShiftedRubberbandCQTs(X, Fs, CShape, bins_per_octave, shiftrange = 6, GapWins = 10):
+    """
+    Concatenate a bunch of pitch shifted versions of the NSGT CQT of X to each other.
+    Use the rubberband library to get the best results (even though pitch shifting
+    could be done with CQT + Griffin Lim, as with Nakamura)
+    :param X: A 1D array of audio samples
+    :param Fs: Sample rate
+    :param bins_per_octave: Bins per octave in the NSGT
+    :param shiftrange: The number of halfsteps below and above which \
+        to shift the sound
+    :param GapWins: The length of the gap to include between \
+        pitch shifted CQTs
+    :returns CRet: The concatenate CQT spectrogram with all pitch shifts
+    """
+    import pyrubberband as pyrb
+    CRet = np.array([], dtype = np.complex)
+    for shift in range(-shiftrange, shiftrange+1):
+        Y = pyrb.pitch_shift(X, Fs, shift)
+        thisC = np.zeros(CShape, dtype=np.complex)
+        thisCi = getNSGT(Y, Fs, bins_per_octave)
+        thisC[:, 0:thisCi.shape[1]] = thisCi
+        if CRet.size == 0:
+            CRet = thisC
+        else:
+            Gap = np.zeros((thisC.shape[0], GapWins), dtype = np.complex)
+            CRet = np.concatenate((CRet, Gap, thisC), 1)
+    return CRet
+
 def testNakamura(X, Fs):
     """
     Test Nakamura's technique on phase retrieval 

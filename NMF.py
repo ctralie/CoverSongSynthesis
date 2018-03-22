@@ -114,26 +114,20 @@ def doNMFDriedger(V, W, L, r = 7, p = 10, c = 3, plotfn = None):
     :param c: Half length of time-continuous activation filter
     """
     import scipy.ndimage
-    N = V.shape[0]
-    M = V.shape[1]
+    N = V.shape[1]
     K = W.shape[1]
     tic = time.time()
-    H = np.random.rand(K, M)
+    H = np.random.rand(K, N)
     print("H.shape = ", H.shape)
     print("Time elapsed H initializing: %.3g"%(time.time() - tic))
     errs = [getKLError(V, W.dot(H))]
     if plotfn:
         res=4
         plt.figure(figsize=(res*5, res))
-        plotfn(V, W, H, 0, errs) 
-        plt.savefig("NMFDriedger_%i.png"%0, bbox_inches = 'tight')
-    
-    #Setup indicator matrices for diagonals
-    [J, I] = np.meshgrid(np.arange(M), np.arange(K))
-
     for l in range(L):
         print("NMF Driedger iteration %i of %i"%(l+1, L))   
         iterfac = 1-float(l+1)/L       
+        tic = time.time()
         #Step 1: Avoid repeated activations
         print("Doing Repeated Activations...")
         MuH = scipy.ndimage.filters.maximum_filter(H, size=(1, r))
@@ -144,13 +138,69 @@ def doNMFDriedger(V, W, L, r = 7, p = 10, c = 3, plotfn = None):
         colCutoff = -np.partition(-H, p, 0)[p, :] 
         H[H < colCutoff[None, :]] = H[H < colCutoff[None, :]]*iterfac
         #Step 3: Supporting time-continuous activations
-        if c > 0:
+        if c > 0:                    
             print("Supporting time-continuous activations...")
+            di = K-1
+            dj = 0
             for k in range(-H.shape[0]+1, H.shape[1]):
                 z = np.cumsum(np.concatenate((np.zeros(c), np.diag(H, k), np.zeros(c))))
                 x2 = z[2*c::] - z[0:-2*c]
-                H[np.diag(I, k), np.diag(J, k)] = x2
+                H[di+np.arange(len(x2)), dj+np.arange(len(x2))] = x2
+                if di == 0:
+                    dj += 1
+                else:
+                    di -= 1
         #KL Divergence Version
+        WH = W.dot(H)
+        WH[WH == 0] = 1
+        VLam = V/WH
+        WDenom = np.sum(W, 0)
+        WDenom[WDenom == 0] = 1
+        H = H*((W.T).dot(VLam)/WDenom[:, None])
+        print("Elapsed Time H Update %.3g"%(time.time() - tic))
+        errs.append(getKLError(V, W.dot(H)))
+        if plotfn and ((l+1)==L):# or (l+1)%20 == 0):
+            plt.clf()
+            plotfn(V, W, H, l+1, errs)
+            plt.savefig("NMDriedger_%i.png"%(l+1), bbox_inches = 'tight')
+    return H
+
+def doNMFDriedgerCTypes(V, W, L, r = 7, p = 10, c = 3, plotfn = None):
+    """
+    Implement the technique from "Let It Bee-Towards NMF-Inspired
+    Audio Mosaicing," with KL divergence updates, using a C-Types 
+    Python wrapper
+    :param V: M x N target matrix
+    :param W: An M x K matrix of template sounds in some time order\
+        along the second axis
+    :param L: Number of iterations
+    :param r: Width of the repeated activation filter
+    :param p: Degree of polyphony; i.e. number of values in each column\
+        of H which should be un-shrunken
+    :param c: Half length of time-continuous activation filter
+    """
+    import scipy.ndimage
+    from _Driedger import DriedgerUpdates
+    M = V.shape[0]
+    N = V.shape[1]
+    K = W.shape[1]
+    tic = time.time()
+    H = np.random.rand(K, N)
+    print("H.shape = ", H.shape)
+    print("Time elapsed H initializing: %.3g"%(time.time() - tic))
+    errs = [getKLError(V, W.dot(H))]
+    if plotfn:
+        res=4
+        plt.figure(figsize=(res*5, res))
+        plotfn(V, W, H, 0, errs) 
+        plt.savefig("NMFDriedger_%i.png"%0, bbox_inches = 'tight')
+
+    for l in range(L):
+        print("NMF Driedger iteration %i of %i"%(l+1, L))   
+        iterfac = 1-float(l+1)/L
+        #First 3 parts of H update
+        ticouter = time.time()
+        DriedgerUpdates(H, r, p, c, float(iterfac))
         tic = time.time()
         WH = W.dot(H)
         WH[WH == 0] = 1
@@ -160,7 +210,7 @@ def doNMFDriedger(V, W, L, r = 7, p = 10, c = 3, plotfn = None):
         WDenom = np.sum(W, 0)
         WDenom[WDenom == 0] = 1
         H = H*((W.T).dot(VLam)/WDenom[:, None])
-        print("Elapsed Time H Update %.3g"%(time.time() - tic))
+        print("Elapsed Time Total H Update %.3g"%(time.time() - ticouter))
         errs.append(getKLError(V, W.dot(H)))
         if plotfn and ((l+1)==L):# or (l+1)%20 == 0):
             plt.clf()
@@ -532,9 +582,6 @@ def getComplexNMF2DTemplates(C, W, H, ZoomFac, p = 2):
     K = W.shape[2]
     #Step 1: Compute the masked matrices raised to the power p
     AsSum = np.zeros(C.shape)
-    print("W.shape = ", W.shape)
-    print("C.shape = ", C.shape)
-    print("H.shape = ", H.shape)
     As = []
     for k in range(K):
         Hk = np.array(H)
