@@ -1,6 +1,3 @@
 [submodule "GeometricCoverSongs"]
 	path = GeometricCoverSongs
 	url = https://github.com/ctralie/GeometricCoverSongs.git
-[submodule "librosa"]
-	path = librosa
-	url = https://github.com/librosa/librosa.git

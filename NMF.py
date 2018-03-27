@@ -539,6 +539,7 @@ def getComplexNMF1DTemplates(S, W, H, p = 2, audioParams = None):
     Ss = []
     Ratios = []
     AllPow = np.abs(np.sum(S*np.conj(S), 0))
+    AllPow[AllPow == 0] = 1
     for k in range(K):
         Ss.append(S*As[k]/AsSum)
         Pow = np.abs(np.sum(Ss[k]*np.conj(Ss[k]), 0))
@@ -596,6 +597,7 @@ def getComplexNMF2DTemplates(C, W, H, ZoomFac, p = 2):
     Cs = []
     Ratios = []
     AllPow = np.abs(np.sum(C*np.conj(C), 0))
+    AllPow[AllPow == 0] = 1
     for k in range(K):
         Cs.append(C*As[k]/AsSum)
         Pow = np.abs(np.sum(Cs[k]*np.conj(Cs[k]), 0))

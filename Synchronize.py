@@ -254,16 +254,16 @@ if __name__ == '__main__':
     TempoBiases = [60, 120, 180]
     """
 
-    """
     filename1 = "music/Aha/AhaTakeOnMe.mp3"
     filename2 = "music/Aha/MXPXTakeOnMe.mp3"
     artist1 = "Aha"
     artist2 = "MXPX"
     fileprefix = "takeonme"
     songName = "Take On Me"
-    TempoBiases = [60, 120, 180]
-    """
+    TempoBiases = [60, 120, 180]    
+    TempoBiases = [0]
 
+    """
     filename1 = "music/HersheyBar/StanGetzQuartet.ebm"
     filename2 = "music/HersheyBar/KenichiroNishihara.ebm"
     artist1 = "Stan Getz Quartet"
@@ -271,6 +271,7 @@ if __name__ == '__main__':
     fileprefix = "hersheybar"
     songName = "Hershey Bar"
     TempoBiases = [60, 120, 180]
+    """
 
     FeatureParams = {'MFCCBeatsPerBlock':20, 'MFCCSamplesPerBlock':200, 'DPixels':50, 'ChromaBeatsPerBlock':20, 'ChromasPerBlock':40}
     CSMTypes = {'MFCCs':'Euclidean', 'SSMs':'Euclidean', 'Chromas':'CosineOTI'}

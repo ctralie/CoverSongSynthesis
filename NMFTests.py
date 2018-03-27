@@ -602,8 +602,8 @@ def testNMF2DMusic(K, T, F, NIters = 440, bins_per_octave = 24, shiftrange = 6, 
     (SsA, SsAp, SsB) = ([], [], [])
     plt.figure(figsize=(20, 3))
     for k, (CAk, CApk, CBk) in enumerate(zip(CsA, CsAp, CsB)):
-        for s1, Cs, Ss, Ck, Ratios in zip(["A", "Ap", "B"], (CsA, CsAp, CsB), \
-                    (SsA, SsAp, SsB), (CAk, CApk, CBk), (RatiosA[k], RatiosAp[k], RatiosB[k])):
+        for s1, Ss, Ck, Ratios in zip(["A", "Ap", "B"], (SsA, SsAp, SsB),\
+                 (CAk, CApk, CBk), (RatiosA[k], RatiosAp[k], RatiosB[k])):
             #First do phase correction and save result to disk
             Xk = getiNSGT(Ck, XSizes[s1], Fs, bins_per_octave)
             wavfile.write("%s/%s%i_iCQT.wav"%(foldername, s1, k), Fs, Xk)
@@ -616,55 +616,38 @@ def testNMF2DMusic(K, T, F, NIters = 440, bins_per_octave = 24, shiftrange = 6, 
             if s1 in ["A", "Ap"]:
                 #Make pitch shifted templates for A and A'
                 Ss.append(getPitchShiftedSpecs(Xk, Fs, winSize, hopSize, shiftrange))
-                Cs[k] = getPitchShiftedRubberbandCQTs(Xk, Fs, Ck.shape, bins_per_octave, \
-                    shiftrange=shiftrange, GapWins = ZoomFac*4)
             else:
                 Ss.append(STFT(Xk, winSize, hopSize))
     
-    ## Step 4: Do NMF STFT and CQT-based Driedger on one track at a time
+    ## Step 4: Do NMF STFT on one track at a time
     fn = lambda V, W, H, iter, errs: plotNMFSpectra(V, W, H, iter, errs, librosahopSize)
     SFinal = np.zeros(SsB[0].shape, dtype = np.complex)
-    CFinal = np.zeros(CsB[0].shape, dtype = np.complex)
+    PowerRatios = []
     for k in range(K):
         print("Doing Driedger on track %i..."%k)
         HFilename = "%s/DriedgerH%i.mat"%(foldername, k)
         if not os.path.exists(HFilename):
-            HSTFT = doNMFDriedger(np.abs(SsB[k]), np.abs(SsA[k]), 100, r = 7, p = 10, c = 3)
-            CBZoom = scipy.ndimage.interpolation.zoom(np.abs(CsB[k]), (1, 1.0/(2*ZoomFac)))
-            CAkZoom = scipy.ndimage.interpolation.zoom(np.abs(CsA[k]), (1, 1.0/(2*ZoomFac)))
-            HCQT = doNMFDriedger(CBZoom, CAkZoom, 100, r = 7, p = 10, c = 4, plotfn = fn)
-            sio.savemat(HFilename, {"HSTFT":HSTFT, "HCQT":HCQT})
+            H = doNMFDriedger(np.abs(SsB[k]), np.abs(SsA[k]), 100, r = 7, p = 10, c = 3)
+            sio.savemat(HFilename, {"H":H})
         else:
-            res = sio.loadmat(HFilename)
-            HSTFT = res['HSTFT']
-            HCQT = res['HCQT']
-        SB = SsA[k].dot(HSTFT)
-        SBp = SsAp[k].dot(HSTFT)
-        SFinal += SBp
+            H = sio.loadmat(HFilename)['H']
+        #First invert the translation STFT
+        SB = SsA[k].dot(H)
+        SBp = SsAp[k].dot(H)
+        PowerRatio =  np.sqrt(np.sum(SsA[k]*np.conj(SsA[k])))
+        PowerRatio /= np.sqrt(np.sum(SsAp[k]*np.conj(SsAp[k])))
+        PowerRatios.append(np.abs(PowerRatio))
+        print("PowerRatio = %.3g"%np.abs(PowerRatio))
+        SFinal += PowerRatio*SBp
         XB = griffinLimInverse(SB, winSize, hopSize)
         XBp = griffinLimInverse(SBp, winSize, hopSize)
         wavfile.write("%s/B%i_DriedgerSTFT.wav"%(foldername, k), Fs, XB)
-        wavfile.write("%s/BpSTFT%i.wav"%(foldername, k), Fs, XBp)
-
-        #Now expand H
-        CB = np.zeros(CFinal.shape, dtype = np.complex)
-        CBp = np.zeros(CFinal.shape, dtype = np.complex)
-        for z in range(2*ZoomFac):
-            CB[:, z::2*ZoomFac] = CsA[k][:, z::2*ZoomFac].dot(HCQT)
-            CBp[:, z::2*ZoomFac] = CsAp[k][:, z::2*ZoomFac].dot(HCQT)
-        CFinal += CBp
-        XB = getiNSGT(CB, XSizes['B'], Fs, bins_per_octave)
-        XBp = getiNSGT(CBp, XSizes['Bp'], Fs, bins_per_octave)
-        wavfile.write("%s/B%i_DriedgerCQT.wav"%(foldername, k), Fs, XB)
-        wavfile.write("%s/BpCQT%i.wav"%(foldername, k), Fs, XBp)
-
-    ## Step 5: Do Griffin Lim phase correction on the final mixed STFT
-    X = getiNSGT(CFinal, XSizes['Bp'], Fs, bins_per_octave)
-    Y = X/np.max(np.abs(X))
-    wavfile.write("%s/BpFinalCQT.wav"%foldername, Fs, Y)
+        wavfile.write("%s/Bp%i_Translated.wav"%(foldername, k), Fs, XBp)
+    sio.savemat("%s/PowerRatios.mat"%foldername, {"PowerRatios":PowerRatios})
+    ## Step 5: Do Griffin Lim phase correction on the final mixed STFTs
     X = griffinLimInverse(SFinal, winSize, hopSize)
     Y = X/np.max(np.abs(X))
-    wavfile.write("%s/BpFinalSTFT.wav"%foldername, Fs, Y)
+    wavfile.write("%s/BpFinalSTFT_Translated.wav"%foldername, Fs, Y)
 
 
 def testDriedgerTranslate():
@@ -717,12 +700,13 @@ def testDriedgerTranslate():
     wavfile.write("Example/BpFinal.wav", Fs, Y)
     
 def doTrials():
-    NTrials = 2
+    NTrials = 3
+    T = 20
     for K in [3, 4, 2]:
-        for T in [20, 30]:
+        for ZoomFac in [2, 4, 8]:
             for Trial in range(NTrials):
-                for Joint3Way in [False, True]:
-                    testNMF2DMusic(K = K, T = T, F = 14, ZoomFac = 2, \
+                for Joint3Way in [False]:
+                    testNMF2DMusic(K = K, T = T, F = 14, ZoomFac = ZoomFac, \
                                     Trial = Trial, Joint3Way = Joint3Way, doKL = True)
 
 if __name__ == '__main__':
@@ -735,7 +719,7 @@ if __name__ == '__main__':
     #testNMF2DConvJoint3WaySynthetic()
     #testHarmPercMusic()
     #testNMF1DMusic()
-    #testNMF2DMusic(K = 2, T = 20, F = 14, bins_per_octave = 24, ZoomFac = 2, \
+    #testNMF2DMusic(K = 2, T = 20, F = 14, bins_per_octave = 24, ZoomFac = 4, \
     #                Joint3Way = False, doKL = True)
     #testDriedgerTranslate()
     doTrials()
