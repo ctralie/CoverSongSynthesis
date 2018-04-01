@@ -118,6 +118,7 @@ def synchronize(filename1, filename2, hopSize, TempoBiases, bSub, FeatureParams,
     (XAudio1, Fs) = getAudioLibrosa(filename1)
     print("Loading %s..."%filename2)
     (XAudio2, Fs) = getAudioLibrosa(filename2)
+    print("Fs = ", Fs)
 
     maxScore = 0.0
     maxRes = {}
@@ -135,6 +136,8 @@ def synchronize(filename1, filename2, hopSize, TempoBiases, bSub, FeatureParams,
             K = 20
             NIters = 3
             res = getCSMSmithWatermanScoresEarlyFusionFull(Features1, O1, Features2, O2, Kappa, K, NIters, CSMTypes, doPlot = True, conservative = False)
+            sio.savemat("Synced.mat", res)
+            print("res.keys() = ", res.keys())
             print("score = ", res['score'])
             if res['score'] > maxScore:
                 print("New maximum score!")
@@ -148,6 +151,12 @@ def synchronize(filename1, filename2, hopSize, TempoBiases, bSub, FeatureParams,
     print("TempoBias1 = %i, TempoBias2 = %i"%(res['TempoBias1'], res['TempoBias2']))
     beats1 = res['beats1']
     beats2 = res['beats2']
+    
+    bs = hopSize*beats1/float(Fs)
+    print("Interval 1: %.3g"%np.mean(bs[1::]-bs[0:-1]))
+    bs = hopSize*beats2/float(Fs)
+    print("Interval 2: %.3g"%np.mean(bs[1::]-bs[0:-1]))
+
     CSM = res['CSM']
     CSM = CSM/np.max(CSM) #Normalize so highest score is 1
     path = np.array(res['path'])
@@ -174,7 +183,7 @@ def synchronize(filename1, filename2, hopSize, TempoBiases, bSub, FeatureParams,
     #Write out true positives beat times and scores
     [beatsFinal, scoresFinal] = [np.array(beatsFinal), np.array(scoresFinal)]
     if len(fileprefix) > 0:
-        sio.savemat("%sTrue.mat"%fileprefix, {"beats":beatsFinal, "scores":scoresFinal, "BeatsPerBlock":BeatsPerBlock, "hopSize":hopSize})
+        sio.savemat("%sTrue.mat"%fileprefix, {"beats1":beats1, "beats2":beats2, "path":path, "beats":beatsFinal, "scores":scoresFinal, "BeatsPerBlock":BeatsPerBlock, "hopSize":hopSize})
 
     #Now save negative examples (same number as positive blocks)
     if doNegative:
@@ -206,6 +215,8 @@ if __name__ == '__main__':
     hopSize = 512
     bSub = 1
     TempoBiases = [0]
+    fileprefix = ""
+    doPlot = False
     
     """
     filename1 = "DespacitoOrig.mp3"
@@ -234,7 +245,6 @@ if __name__ == '__main__':
     songName = "La Folia"
     """
 
-    """
     filename1 = "music/SmoothCriminalMJ.mp3"
     filename2 = "music/SmoothCriminalAAF.mp3"
     artist1 = "Michael Jackson"
@@ -242,7 +252,6 @@ if __name__ == '__main__':
     fileprefix = "smoothcriminal"
     songName = "Smooth Criminal"
     TempoBiases = [180]
-    """
 
     """
     filename1 = "music/Rednex/CottoneyeJoe.mp3"
@@ -252,8 +261,10 @@ if __name__ == '__main__':
     fileprefix = "cottoneyejoe"
     songName = "Cottoneye Joe"
     TempoBiases = [60, 120, 180]
+    TempoBiases = [0]
     """
 
+    """
     filename1 = "music/Aha/AhaTakeOnMe.mp3"
     filename2 = "music/Aha/MXPXTakeOnMe.mp3"
     artist1 = "Aha"
@@ -262,20 +273,64 @@ if __name__ == '__main__':
     songName = "Take On Me"
     TempoBiases = [60, 120, 180]    
     TempoBiases = [0]
+    """
 
     """
-    filename1 = "music/HersheyBar/StanGetzQuartet.ebm"
-    filename2 = "music/HersheyBar/KenichiroNishihara.ebm"
+    filename1 = "music/HersheyBar/StanGetzQuartet.mp3"
+    filename2 = "music/HersheyBar/KenichiroNishihara.mp3"
     artist1 = "Stan Getz Quartet"
     artist2 = "Kenichiro Nishihara"
     fileprefix = "hersheybar"
     songName = "Hershey Bar"
     TempoBiases = [60, 120, 180]
+    TempoBiases = [0]
+    """
+
+    """
+    filename1 = "music/SweetDreams/Eurythmics.mp3"
+    filename2 = "music/SweetDreams/MarilynManson.mp3"
+    artist1 = "Eurythmics"
+    artist2 = "Marilyn Manson"
+    fileprefix = "sweetdreams"
+    songName = "Sweet Dreams"
+    TempoBiases = [0]
+    """
+
+    """
+    filename1 = "music/MIDIExample/StayinAliveMIDI.mp3"
+    filename2 = "music/MIDIExample/StayinAlive.mp3"
+    artist1 = "BeeGeesMIDI"
+    artist2 = "BeeGees"
+    fileprefix = "stayinalive"
+    songName = "Stayin Alive"
+    TempoBiases = [120]
+    fileprefix = "beegees"
+    doPlot = True
+    """
+
+    """
+    filename1 = "music/Coldplay/InMyPlaceColdplay.mp3"
+    filename2 = "music/Coldplay/InMyPlaceMetal.mp3"
+    artist1 = "Coldplay"
+    artist2 = "Leo Moriachielli"
+    fileprefix = "coldplay"
+    songName = "In My Place"
+    TempoBiases = [0]
+    """
+
+    """
+    filename1 = "music/Oasis/WonderwallOasis.mp3"
+    filename2 = "music/Oasis/WonderwallMetal.mp3"
+    artist1 = "Oasis"
+    artist2 = "Leo Moriachielli"
+    fileprefix = "oasis"
+    songName = "Wonderwall"
+    TempoBiases = [180]
     """
 
     FeatureParams = {'MFCCBeatsPerBlock':20, 'MFCCSamplesPerBlock':200, 'DPixels':50, 'ChromaBeatsPerBlock':20, 'ChromasPerBlock':40}
     CSMTypes = {'MFCCs':'Euclidean', 'SSMs':'Euclidean', 'Chromas':'CosineOTI'}
 
-    res = synchronize(filename1, filename2, hopSize, TempoBiases, bSub, FeatureParams, CSMTypes, Kappa)
+    res = synchronize(filename1, filename2, hopSize, TempoBiases, bSub, FeatureParams, CSMTypes, Kappa, fileprefix=fileprefix, doPlot=doPlot)
     sio.wavfile.write("temp.wav", res['Fs'], res['X'])
     subprocess.call(["avconv", "-i", "temp.wav", "%sTrue.mp3"%fileprefix])

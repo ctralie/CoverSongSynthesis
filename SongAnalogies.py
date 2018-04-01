@@ -10,6 +10,8 @@ from GeometricCoverSongs.CSMSSMTools import *
 from GeometricCoverSongs.pyMIRBasic.Chroma import *
 from GeometricCoverSongs.pyMIRBasic.MFCC import *
 from SpectrogramTools import *
+from NMFGPU import *
+from CQT import *
 
 def getNormedFeatures(S, winSize, hopSize):
     """
@@ -108,6 +110,174 @@ def makeAnalogy(X, Fs, beatsA, filename_b, hopSize, winSize, ws, TempoBias, MFCC
     ratio = float(tempoA)/tempoB
     print("Shifting by ratio: %g"%ratio)
     XB = pyrb.time_stretch(XB, Fs2, ratio)
+
+def do2DFilteredAnalogy(A, Ap, B, Fs, K, T, F, NIters = 300, bins_per_octave = 24, \
+                    shiftrange = 6, ZoomFac = 8, Trial = 0, Joint3Way = False, \
+                    W1Fixed = False, HFixed = False, doKL = False, songname = "", 
+                    W1 = np.array([]), W2 = np.array([]), H1 = np.array([])):
+    """
+    :param Joint3Way: If true, do a joint embedding with A, Ap, and B\
+        If false, then do a joint embedding with (A, Ap) and represent\
+        B in the A dictionary
+    """
+    from scipy.io import wavfile
+    import scipy.ndimage
+    initParallelAlgorithms()
+    doInitialInversions = False
+
+    #STFT Parameters
+    hopSize = 256
+    winSize = 2048
+
+    ## Step 1: Compute CQTs
+    XSizes = {}
+    librosahopSize = int(np.round(Fs/100.0)) #For librosa display to know approximate timescale
+
+    resOrig = {}
+    res = {}
+    for (V, s) in zip([A, Ap, B], ["A", "Ap", "B"]):
+        print("Doing CQT of %s..."%s)
+        C0 = getNSGT(V, Fs, bins_per_octave)
+        print("%s.shape = "%s, C0.shape)
+        #Zeropad to nearest even factor of the zoom factor
+        NRound = ZoomFac*int(np.ceil(C0.shape[1]/float(ZoomFac)))
+        C = np.zeros((C0.shape[0], NRound), dtype = np.complex)
+        C[:, 0:C0.shape[1]] = C0
+        resOrig[s] = C
+        C = np.abs(C)
+        C = scipy.ndimage.interpolation.zoom(C, (1, 1.0/ZoomFac))
+        XSizes[s] = V.size
+        res[s] = C
+        if doInitialInversions:
+            CZoom = scipy.ndimage.interpolation.zoom(C, (1, ZoomFac))
+            y_hat = getiNSGTGriffinLim(CZoom, V.size, Fs, bins_per_octave, \
+                                                NIters = 100, randPhase = True)
+            sio.wavfile.write("%sGTInverted.wav"%s, Fs, y_hat)
+    XSizes["Bp"] = XSizes["B"]
+    print(XSizes)
+
+    [CAOrig, CApOrig, CBOrig] = [resOrig['A'], resOrig['Ap'], resOrig['B']]
+    [CA, CAp, CB] = [res['A'], res['Ap'], res['B']]
+    sio.savemat("Cs.mat", {"CA":CA, "CAp":CAp, "CB":CB})
+    #Compute length of convolutional window in milliseconds
+    t = 1000.0*(XSizes['A']/float(Fs))*float(T)/CA.shape[1]
+    print("Convolutional window size: %.3g milliseconds"%t)
+
+    audioParams={'Fs':Fs, 'bins_per_octave':bins_per_octave, \
+                'prefix':'', 'XSizes':XSizes, "ZoomFac":ZoomFac}
+    audioParams = None
+    ## Step 2: Compute joint NMF
+    if Joint3Way:
+        #Do Joint 3 Way 2DNMF
+        foldername = "%s_Joint2DNMFFiltered3Way_K%i_Z%i_T%i_Bins%i_F%i_Trial%i_KL%i"%\
+                        (songname, K, ZoomFac, T, bins_per_octave, F, Trial, doKL)
+        filename = "%s/NMF2DJoint.mat"%foldername
+        if not os.path.exists(foldername):
+            os.mkdir(foldername)
+        if not os.path.exists(filename):
+            plotfn = lambda A, Ap, B, W1, W2, H1, H2, iter, errs, foldername: \
+                plotNMF2DConvSpectraJoint3Way(A, Ap, B, W1, W2, H1, H2, iter, errs,\
+                foldername, hopLength = librosahopSize, audioParams=audioParams, useGPU = True)
+            (W1, W2, H1, H2) = doNMF2DConvJoint3WayGPU(CA, CAp, CB, K, T, F, L=NIters, \
+                doKL = doKL, plotfn=plotfn, plotInterval = NIters*2, foldername = foldername)
+            sio.savemat(filename, {"W1":W1, "W2":W2, "H1":H1, "H2":H2})
+        else:
+            res = sio.loadmat(filename)
+            [W1, W2, H1, H2] = [res['W1'], res['W2'], res['H1'], res['H2']]
+    else:
+        #Do 2DNMF jointly on A and Ap, then filter B by A's dictionary
+        foldername = "%s_Joint2DNMFFiltered_K%i_Z%i_T%i_Bins%i_F%i_Trial%i_KL%i"%\
+                        (songname, K, ZoomFac, T, bins_per_octave, F, Trial, doKL)
+        if HFixed:
+            foldername += "_HFixed"
+        if W1Fixed:
+            foldername += "_W1Fixed"
+        filename = "%s/NMF2DJoint.mat"%foldername
+        if not os.path.exists(foldername):
+            os.mkdir(foldername)
+        plotfn = lambda A, Ap, W1, W2, H, iter, errs, foldername: \
+            plotNMF2DConvSpectraJoint(A, Ap, W1, W2, H, iter, errs, \
+            foldername, hopLength = librosahopSize, audioParams = audioParams)
+        if not os.path.exists(filename):
+            if H1.size == 0 or W1.size == 0 or W2.size == 0:
+                if W1Fixed or HFixed:
+                    #Learn W1 and H on the first song only first, then use that
+                    #on the second song
+                    if W1.size == 0:
+                        (W1, H1) = doNMF2DConvGPU(CA, K, T, F, L=NIters, doKL = doKL)
+                        if not W1Fixed:
+                            W1 = np.array([])
+                        if not HFixed:
+                            H1 = np.array([])
+                (W1, W2, H1) = doNMF2DConvJointGPU(CA, CAp, K, T, F, L=NIters, \
+                                                    W1 = W1, H = H1, doKL = doKL,\
+                                                    plotfn = plotfn, plotInterval=NIters*2, \
+                                                    foldername = foldername)
+            #Represent B in the dictionary of A
+            plotfn2 = lambda V, W, H, iter, errs: \
+                plotNMF2DConvSpectra(V, W, H, iter, errs, hopLength = librosahopSize)
+            (W, H2) = doNMF2DConvGPU(CB, K, T, F, W=W1, L=NIters, doKL = doKL, \
+                                    plotfn=plotfn2, plotInterval=NIters*2)
+            sio.savemat(filename, {"W1":W1, "W2":W2, "H1":H1, "H2":H2})
+        else:
+            res = sio.loadmat(filename)
+            [W1, W2, H1, H2] = [res['W1'], res['W2'], res['H1'], res['H2']]
+            plotfn(CA, CAp, W1, W2, H1, 0, np.array([[1, 1]]), ".")
+    
+    ## Step 3: Compute components and pitch shifted dictionaries
+    (CsA, RatiosA) = getComplexNMF2DTemplates(CAOrig, W1, H1, ZoomFac, p = 2)
+    (CsAp, RatiosAp) = getComplexNMF2DTemplates(CApOrig, W2, H1, ZoomFac, p = 2)
+    (CsB, RatiosB) = getComplexNMF2DTemplates(CBOrig, W1, H2, ZoomFac, p = 2)
+    (SsA, SsAp, SsB) = ([], [], [])
+    plt.figure(figsize=(20, 3))
+    for k, (CAk, CApk, CBk) in enumerate(zip(CsA, CsAp, CsB)):
+        for s1, Ss, Ck, Ratios in zip(["A", "Ap", "B"], (SsA, SsAp, SsB),\
+                 (CAk, CApk, CBk), (RatiosA[k], RatiosAp[k], RatiosB[k])):
+            #First do phase correction and save result to disk
+            Xk = getiNSGT(Ck, XSizes[s1], Fs, bins_per_octave)
+            wavfile.write("%s/%s%i_iCQT.wav"%(foldername, s1, k), Fs, Xk)
+            Xk = Xk.flatten()
+            plt.clf()
+            plt.plot(Ratios)
+            plt.xlim([0, len(Ratios)])
+            plt.title("Ratio, %.3g Above 0.1"%(np.sum(Ratios[k] > 0.1)/Ratios[k].size))
+            plt.savefig("%s/%s_%iPower.svg"%(foldername, s1, k), bbox_inches = 'tight')
+            if s1 in ["A", "Ap"]:
+                #Make pitch shifted templates for A and A'
+                Ss.append(getPitchShiftedSpecs(Xk, Fs, winSize, hopSize, shiftrange))
+            else:
+                Ss.append(STFT(Xk, winSize, hopSize))
+    
+    ## Step 4: Do NMF STFT on one track at a time
+    fn = lambda V, W, H, iter, errs: plotNMFSpectra(V, W, H, iter, errs, librosahopSize)
+    SFinal = np.zeros(SsB[0].shape, dtype = np.complex)
+    PowerRatios = []
+    for k in range(K):
+        print("Doing Driedger on track %i..."%k)
+        HFilename = "%s/DriedgerH%i.mat"%(foldername, k)
+        if not os.path.exists(HFilename):
+            H = doNMFDriedger(np.abs(SsB[k]), np.abs(SsA[k]), 100, r = 7, p = 10, c = 3)
+            sio.savemat(HFilename, {"H":H})
+        else:
+            H = sio.loadmat(HFilename)['H']
+        #First invert the translation STFT
+        SB = SsA[k].dot(H)
+        SBp = SsAp[k].dot(H)
+        PowerRatio =  np.sqrt(np.sum(SsA[k]*np.conj(SsA[k])))
+        PowerRatio /= np.sqrt(np.sum(SsAp[k]*np.conj(SsAp[k])))
+        PowerRatios.append(np.abs(PowerRatio))
+        print("PowerRatio = %.3g"%np.abs(PowerRatio))
+        SFinal += PowerRatio*SBp
+        XB = griffinLimInverse(SB, winSize, hopSize)
+        XBp = griffinLimInverse(SBp, winSize, hopSize)
+        wavfile.write("%s/B%i_DriedgerSTFT.wav"%(foldername, k), Fs, XB)
+        wavfile.write("%s/Bp%i_Translated.wav"%(foldername, k), Fs, XBp)
+    sio.savemat("%s/PowerRatios.mat"%foldername, {"PowerRatios":PowerRatios})
+    ## Step 5: Do Griffin Lim phase correction on the final mixed STFTs
+    X = griffinLimInverse(SFinal, winSize, hopSize)
+    Y = X/np.max(np.abs(X))
+    wavfile.write("%s/BpFinalSTFT_Translated.wav"%foldername, Fs, Y)
+    return {'Y':Y, 'foldername':foldername}
 
 if __name__ == '__main__':
     #Sync parameters

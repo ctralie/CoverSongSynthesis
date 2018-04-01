@@ -200,7 +200,7 @@ if __name__ == '__main__':
     B = readImage("input/texture1.B2.jpg")
     """
 
-    res = doImageAnalogies(A, Ap, B, Kappa = 0.1, NLevels = 1)
+    res = doImageAnalogies(A, Ap, B, Kappa = 0.1, NLevels = 3)
 
 if __name__ == '__main__2':
     N = 40

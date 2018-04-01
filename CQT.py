@@ -287,5 +287,5 @@ if __name__ == '__main__':
     A = X[:, 0]/(2.0**15)
     A = A[0:Fs*30]
     testNSGT(A, Fs)
-    testNakamura(A, Fs)
+    #testNakamura(A, Fs)
     #testNakamuraBlur(A, Fs, ZoomFac = 2)

@@ -384,7 +384,9 @@ def doNMF2DConvGPU(V, K, T, F, L, W = np.array([]), doKL = False, plotfn = None,
         W = makeRandomGPUArray(T, N, K)
     else:
         WFixed = True
-        W = gpuarray.to_gpu(np.array(W, dtype=np.float32))
+        thisW = np.zeros(W.shape, dtype=np.float32)
+        thisW[:, :, :] = W
+        W = gpuarray.to_gpu(np.array(thisW, dtype=np.float32))
     H = makeRandomGPUArray(F, K, M)
     WH = multiplyConv2DGPU(W, H)
     errfn = getEuclideanErrorGPU
@@ -425,8 +427,9 @@ def doNMF2DConvGPU(V, K, T, F, L, W = np.array([]), doKL = False, plotfn = None,
     return (W.get(), H.get())
 
 
-def doNMF2DConvJointGPU(A, Ap, K, T, F, L, W = np.array([]), doKL = False, plotfn = None, \
-    plotInterval = 60, plotFirst = False, foldername = ".", errfn = getEuclideanErrorGPU):
+def doNMF2DConvJointGPU(A, Ap, K, T, F, L, W1 = np.array([]), H = np.array([]), \
+    doKL = False, plotfn = None, plotInterval = 60, plotFirst = False, \
+    foldername = ".", errfn = getEuclideanErrorGPU):
     """
     Do a joint version of 2DNMF solving for W1, W2, and H, where 
     A ~= W1*H and Ap ~= W2*H
@@ -438,6 +441,8 @@ def doNMF2DConvJointGPU(A, Ap, K, T, F, L, W = np.array([]), doKL = False, plotf
     :param T: Time extent of W matrices
     :param F: Frequency extent of H matrices
     :param L: Number of iterations
+    :param W1: If this matrix is specified, hold it fixed
+    :param H: If this matrix is specified, hold it fixed
     :param doKL: Whether to do Kullback-Leibler divergence.  If false, do Euclidean
     :param plotfn: A function used to plot each iteration, which should\
         take the arguments (V, W, H, iter)
@@ -451,9 +456,19 @@ def doNMF2DConvJointGPU(A, Ap, K, T, F, L, W = np.array([]), doKL = False, plotf
     M = A.shape[1]
     A = gpuarray.to_gpu(np.array(A, dtype=np.float32))
     Ap = gpuarray.to_gpu(np.array(Ap, dtype=np.float32))
-    W1 = makeRandomGPUArray(T, N, K)
+    W1Fixed = False
+    HFixed = False
+    if W1.size > 0:
+        W1Fixed = True
+        W1 = gpuarray.to_gpu(np.array(W1, dtype=np.float32))
+    else:
+        W1 = makeRandomGPUArray(T, N, K)
     W2 = makeRandomGPUArray(T, N, K)
-    H = makeRandomGPUArray(F, K, M)
+    if H.size > 0:
+        HFixed = True
+        H = gpuarray.to_gpu(np.array(H, dtype=np.float32))
+    else:
+        H = makeRandomGPUArray(F, K, M)
 
     errfn = getEuclideanErrorGPU
     WGradfn = multiplyConv2DWGradGPU
@@ -474,22 +489,24 @@ def doNMF2DConvJointGPU(A, Ap, K, T, F, L, W = np.array([]), doKL = False, plotf
         print("Joint 2DNMF iteration %i of %i"%(l+1, L))
         tic = time.time()
         #Step 1: Update Ws
-        ALam = multiplyConv2DGPU(W1, H)
+        if not W1Fixed:
+            ALam = multiplyConv2DGPU(W1, H)
+            WFac = WGradfn(W1, H, A, ALam)
+            W1 = skcuda.misc.multiply(W1, WFac)
         ApLam = multiplyConv2DGPU(W2, H)
-        WFac = WGradfn(W1, H, A, ALam)
-        W1 = skcuda.misc.multiply(W1, WFac)
         WFac = WGradfn(W2, H, Ap, ApLam)
         W2 = skcuda.misc.multiply(W2, WFac)
 
         #Step 2: Update Hs
-        ALam = multiplyConv2DGPU(W1, H)
-        ApLam = multiplyConv2DGPU(W2, H)
-        (HNums1, HDenoms1)= HGradfn(W1, H, A, ALam, doDivision = False)
-        (HNums2, HDenoms2)= HGradfn(W2, H, Ap, ApLam, doDivision = False)
-        HNums = skcuda.misc.add(HNums1, HNums2)
-        HDenoms = skcuda.misc.add(HDenoms1, HDenoms2)
-        HFac = skcuda.misc.divide(HNums, HDenoms)
-        H = skcuda.misc.multiply(H, HFac)
+        if not HFixed:
+            ALam = multiplyConv2DGPU(W1, H)
+            ApLam = multiplyConv2DGPU(W2, H)
+            (HNums1, HDenoms1)= HGradfn(W1, H, A, ALam, doDivision = False)
+            (HNums2, HDenoms2)= HGradfn(W2, H, Ap, ApLam, doDivision = False)
+            HNums = skcuda.misc.add(HNums1, HNums2)
+            HDenoms = skcuda.misc.add(HDenoms1, HDenoms2)
+            HFac = skcuda.misc.divide(HNums, HDenoms)
+            H = skcuda.misc.multiply(H, HFac)
 
         #Plot results
         errs.append([errfn(A, multiplyConv2DGPU(W1, H)), errfn(Ap, multiplyConv2DGPU(W2, H))])
